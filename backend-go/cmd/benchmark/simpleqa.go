@@ -1,16 +1,14 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
-
-	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/agents"
-	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/config"
 )
 
 type SimpleQAQuestion struct {
@@ -43,10 +41,10 @@ func main() {
 	dataFile := flag.String("data", "simpleqa_dataset.json", "Path to SimpleQA dataset JSON file")
 	limit := flag.Int("limit", 10, "Number of questions to test (0 = all)")
 	output := flag.String("output", "benchmark_results.json", "Output file for results")
+	apiURL := flag.String("api", "http://localhost:8000", "Backend API URL")
 	flag.Parse()
 
-	cfg := config.LoadConfig()
-	router := agents.NewRouterAgent(cfg)
+	log.Printf("Using API: %s", *apiURL)
 
 	questions, err := loadDataset(*dataFile)
 	if err != nil {
@@ -63,14 +61,23 @@ func main() {
 	startTime := time.Now()
 
 	for i, q := range questions {
-		log.Printf("[%d/%d] Testing: %s", i+1, len(questions), q.Question)
-		result := runQuestion(router, q, *mode)
+		log.Printf("\n[%d/%d] Testing: %s", i+1, len(questions), q.Question)
+		log.Printf("  📌 Expected: %s", q.Answer)
+
+		result := runQuestion(*apiURL, q, *mode)
 		results = append(results, result)
 
 		status := "✅"
 		if !result.Success {
 			status = "❌"
 		}
+
+		// Show actual answer (truncated if too long)
+		actualAnswer := result.ActualAnswer
+		if len(actualAnswer) > 150 {
+			actualAnswer = actualAnswer[:150] + "..."
+		}
+		log.Printf("  💬 Got: %s", actualAnswer)
 		log.Printf("  %s (%.2fs)", status, result.ProcessingTime.Seconds())
 	}
 
@@ -117,18 +124,67 @@ func createSampleDataset() []SimpleQAQuestion {
 	}
 }
 
-func runQuestion(router *agents.RouterAgent, q SimpleQAQuestion, mode string) BenchmarkResult {
-	ctx := context.Background()
+type SearchRequest struct {
+	Query string `json:"query"`
+	Mode  string `json:"mode"`
+}
+
+type SearchResponse struct {
+	Answer  string   `json:"answer"`
+	Sources []Source `json:"sources"`
+}
+
+type Source struct {
+	Title   string  `json:"title"`
+	URL     string  `json:"url"`
+	Snippet string  `json:"snippet"`
+	Score   float64 `json:"credibility"`
+}
+
+func runQuestion(apiURL string, q SimpleQAQuestion, mode string) BenchmarkResult {
 	start := time.Now()
 
-	result, err := router.ProcessQuery(ctx, q.Question, mode)
-	processingTime := time.Since(start)
-
+	// Create request
+	reqBody := SearchRequest{
+		Query: q.Question,
+		Mode:  mode,
+	}
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
 		return BenchmarkResult{
 			Question:       q.Question,
 			ExpectedAnswer: q.Answer,
-			ActualAnswer:   fmt.Sprintf("ERROR: %v", err),
+			ActualAnswer:   fmt.Sprintf("ERROR marshaling request: %v", err),
+			Category:       q.Category,
+			ProcessingTime: time.Since(start),
+			Success:        false,
+			Mode:           mode,
+		}
+	}
+
+	// Make HTTP POST request
+	resp, err := http.Post(apiURL+"/api/search", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return BenchmarkResult{
+			Question:       q.Question,
+			ExpectedAnswer: q.Answer,
+			ActualAnswer:   fmt.Sprintf("ERROR calling API: %v", err),
+			Category:       q.Category,
+			ProcessingTime: time.Since(start),
+			Success:        false,
+			Mode:           mode,
+		}
+	}
+	defer resp.Body.Close()
+
+	processingTime := time.Since(start)
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return BenchmarkResult{
+			Question:       q.Question,
+			ExpectedAnswer: q.Answer,
+			ActualAnswer:   fmt.Sprintf("ERROR: HTTP %d", resp.StatusCode),
 			Category:       q.Category,
 			ProcessingTime: processingTime,
 			Success:        false,
@@ -136,6 +192,21 @@ func runQuestion(router *agents.RouterAgent, q SimpleQAQuestion, mode string) Be
 		}
 	}
 
+	// Parse response
+	var result SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return BenchmarkResult{
+			Question:       q.Question,
+			ExpectedAnswer: q.Answer,
+			ActualAnswer:   fmt.Sprintf("ERROR parsing response: %v", err),
+			Category:       q.Category,
+			ProcessingTime: processingTime,
+			Success:        false,
+			Mode:           mode,
+		}
+	}
+
+	// Check success
 	success := result.Answer != "" && len(result.Sources) > 0
 
 	return BenchmarkResult{

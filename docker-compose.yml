@@ -33,55 +33,25 @@ services:
     networks:
       - research_network
 
-  # SearXNG
-  searxng:
-    image: searxng/searxng:latest
-    container_name: research_searxng
-    ports:
-      - "8999:8080"
-    environment:
-      - SEARXNG_SECRET=\${SEARXNG_SECRET}
-    volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-    depends_on:
-      - redis
-    networks:
-      - research_network
-
-  # Tavily Adapter
-  tavily-adapter:
-    build: ./searxng/simple_tavily_adapter
-    container_name: research_tavily
+  # Backend (Go)
+  backend:
+    build: ./backend-go
+    container_name: research_backend
     ports:
       - "8000:8000"
     environment:
-      - SEARXNG_URL=http://searxng:8080
-    depends_on:
-      - searxng
-    networks:
-      - research_network
-
-  # Backend
-  backend:
-    build: ./backend
-    container_name: research_backend
-    ports:
-      - "8080:8080"
-    environment:
-      - DATABASE_URL=postgresql://research_user:research_pass@postgres:5432/research_db
+      - PORT=8000
+      - DEBUG=true
+      - DATABASE_URL=postgres://research_user:research_pass@postgres:5432/research_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
-      - TAVILY_URL=http://tavily-adapter:8000
-      - LLM_API_URL=\${LLM_API_URL}
-      - LLM_API_KEY=\${LLM_API_KEY:-dummy}
-      - CORS_ORIGINS=http://localhost:3000
-    volumes:
-      - ./backend:/app
+      - OPENAI_API_KEY=\${OPENAI_API_KEY}
+      - OPENAI_MODEL=\${OPENAI_MODEL:-gpt-4}
+      - QWEN_API_URL=\${QWEN_API_URL}
+      - QWEN_MODEL=\${QWEN_MODEL:-qwen-turbo}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-      tavily-adapter:
         condition: service_started
     networks:
       - research_network
@@ -95,7 +65,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=development
     volumes:
       - ./frontend:/app

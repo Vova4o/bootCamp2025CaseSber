@@ -8,7 +8,7 @@ import logging
 from ..core.config import settings
 from ..core.database import get_db, engine, Base
 from ..core.models import SearchHistory
-from ..tools.llm_client import LLMClient
+from ..tools.llm_factory import create_llm_client
 from ..tools.search_client import SearchClient
 from ..agents.simple_mode import process_simple_mode
 from ..agents.pro_mode import process_pro_mode
@@ -34,7 +34,12 @@ app.add_middleware(
 )
 
 # Клиенты (синглтоны)
-llm_client = LLMClient(settings.llm_api_url, settings.llm_api_key)
+llm_client = create_llm_client(
+    provider=settings.llm_provider,
+    api_key=settings.openai_api_key if settings.llm_provider == "openai" else settings.llm_api_key,
+    base_url=settings.llm_api_url if settings.llm_provider == "local" else None,
+    model=settings.openai_model if settings.llm_provider == "openai" else None
+)
 search_client = SearchClient(settings.tavily_url)
 
 # Models
@@ -57,6 +62,7 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("✓ Database initialized")
+    logger.info(f"✓ LLM Provider: {settings.llm_provider}")
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -70,12 +76,16 @@ async def root():
     return {
         "service": "Research Pro Mode API",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "llm_provider": settings.llm_provider
     }
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "llm_provider": settings.llm_provider
+    }
 
 @app.post("/api/search", response_model=SearchResponse)
 async def search(request: SearchRequest, db: AsyncSession = Depends(get_db)):

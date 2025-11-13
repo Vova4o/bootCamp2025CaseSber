@@ -2,16 +2,24 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Копирование package files
-COPY package*.json ./
+# Установка системных зависимостей
+RUN apk add --no-cache libc6-compat
 
-# Установка зависимостей
-RUN npm ci
+# Копирование файлов зависимостей
+COPY package.json yarn.lock* ./
 
-# Копирование остальных файлов
+# Установка Yarn и зависимостей
+RUN yarn install
+
+# Копирование остального кода
 COPY . .
+
+# Переменные окружения
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-# Запуск dev сервера
-CMD ["npm", "run", "dev"]
+# Запуск
+CMD ["yarn", "dev"]

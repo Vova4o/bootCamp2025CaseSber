@@ -13,9 +13,16 @@ class Settings(BaseSettings):
     tavily_url: str = "http://tavily-adapter:8000"
     searxng_url: str = "http://searxng:8080"
     
-    # LLM
-    llm_api_url: str
+    # LLM Provider: "local" или "openai"
+    llm_provider: str = "local"
+    
+    # Local LLM (если llm_provider = "local")
+    llm_api_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "dummy"
+    
+    # OpenAI (если llm_provider = "openai")
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4-turbo-preview"  # или gpt-3.5-turbo
     
     # Search settings
     max_results_simple: int = 5

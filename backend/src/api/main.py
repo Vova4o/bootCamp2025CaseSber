@@ -192,9 +192,12 @@ async def create_chat_session(
         await db.refresh(session)
         
         logger.info(f"Created chat session: {session.id} with mode: {request.mode}")
+        
+        # Возвращаем простой словарь без загрузки сообщений
         return session.to_dict()
     except Exception as e:
         logger.error(f"Failed to create session: {e}")
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/chat/session/{session_id}")
@@ -204,15 +207,25 @@ async def get_chat_session(
 ):
     """Получение истории чат-сессии"""
     try:
+        # Явно загружаем сообщения через selectinload
         result = await db.execute(
-            select(ChatSession).where(ChatSession.id == session_id)
+            select(ChatSession)
+            .options(selectinload(ChatSession.messages))
+            .where(ChatSession.id == session_id)
         )
         session = result.scalar_one_or_none()
         
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         
-        return session.to_dict()
+        # Теперь можем безопасно получить доступ к messages
+        return {
+            "id": session.id,
+            "mode": session.mode,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+            "messages": [msg.to_dict() for msg in session.messages]
+        }
     except HTTPException:
         raise
     except Exception as e:

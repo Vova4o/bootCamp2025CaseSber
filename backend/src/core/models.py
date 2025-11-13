@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, Float, JSON, ForeignKey, Integer
+from sqlalchemy import Column, String, Text, DateTime, Float, JSON, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -12,16 +12,22 @@ class ChatSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationship to messages
-    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+    # Убираем lazy="selectinload" - это неправильный синтаксис
+    messages = relationship(
+        "ChatMessage", 
+        back_populates="session", 
+        cascade="all, delete-orphan",
+        lazy="select"  # Изменили на select
+    )
     
     def to_dict(self):
+        """Базовый словарь без сообщений"""
         return {
             "id": self.id,
             "mode": self.mode,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "messages": [msg.to_dict() for msg in self.messages]
+            "messages": []
         }
 
 class ChatMessage(Base):
@@ -29,13 +35,12 @@ class ChatMessage(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String(20), nullable=False)  # user, assistant, system
+    role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     sources = Column(JSON, nullable=True)
     reasoning = Column(Text, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     
-    # Relationship to session
     session = relationship("ChatSession", back_populates="messages")
     
     def to_dict(self):

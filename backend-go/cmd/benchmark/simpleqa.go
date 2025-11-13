@@ -124,23 +124,6 @@ func createSampleDataset() []SimpleQAQuestion {
 	}
 }
 
-type SearchRequest struct {
-	Query string `json:"query"`
-	Mode  string `json:"mode"`
-}
-
-type SearchResponse struct {
-	Answer  string   `json:"answer"`
-	Sources []Source `json:"sources"`
-}
-
-type Source struct {
-	Title   string  `json:"title"`
-	URL     string  `json:"url"`
-	Snippet string  `json:"snippet"`
-	Score   float64 `json:"credibility"`
-}
-
 func runQuestion(apiURL string, q SimpleQAQuestion, mode string) BenchmarkResult {
 	start := time.Now()
 

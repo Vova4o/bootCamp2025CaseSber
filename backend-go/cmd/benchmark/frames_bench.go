@@ -22,18 +22,18 @@ type FRAMESQuestion struct {
 }
 
 type FRAMESResult struct {
-	Question          string        `json:"question"`
-	ExpectedAnswer    string        `json:"expected_answer"`
-	ActualAnswer      string        `json:"actual_answer"`
-	Category          string        `json:"category"`
-	ProcessingTime    time.Duration `json:"processing_time"`
-	FactualityScore   float64       `json:"factuality_score"`
-	ReasoningDepth    float64       `json:"reasoning_depth"`
-	SourceDiversity   float64       `json:"source_diversity"`
-	SourceCount       int           `json:"source_count"`
-	HopCount          int           `json:"hop_count"`
-	Success           bool          `json:"success"`
-	Mode              string        `json:"mode"`
+	Question        string        `json:"question"`
+	ExpectedAnswer  string        `json:"expected_answer"`
+	ActualAnswer    string        `json:"actual_answer"`
+	Category        string        `json:"category"`
+	ProcessingTime  time.Duration `json:"processing_time"`
+	FactualityScore float64       `json:"factuality_score"`
+	ReasoningDepth  float64       `json:"reasoning_depth"`
+	SourceDiversity float64       `json:"source_diversity"`
+	SourceCount     int           `json:"source_count"`
+	HopCount        int           `json:"hop_count"`
+	Success         bool          `json:"success"`
+	Mode            string        `json:"mode"`
 }
 
 type FRAMESStats struct {
@@ -73,7 +73,7 @@ func mainFRAMES() {
 	startTime := time.Now()
 
 	for i, q := range questions {
-		log.Printf("\n[%d/%d] 🔬 Multi-hop Question (%d hops): %s", 
+		log.Printf("\n[%d/%d] 🔬 Multi-hop Question (%d hops): %s",
 			i+1, len(questions), q.HopCount, q.Question)
 		log.Printf("  📌 Expected: %s", q.Answer)
 		log.Printf("  🔑 Keywords: %v", q.Keywords)
@@ -88,7 +88,7 @@ func mainFRAMES() {
 
 		log.Printf("  💬 Got: %s", truncate(result.ActualAnswer, 150))
 		log.Printf("  %s Scores: Factuality=%.2f, Depth=%.2f, Diversity=%.2f (%.2fs)",
-			status, result.FactualityScore, result.ReasoningDepth, 
+			status, result.FactualityScore, result.ReasoningDepth,
 			result.SourceDiversity, result.ProcessingTime.Seconds())
 	}
 
@@ -96,7 +96,7 @@ func mainFRAMES() {
 	stats := calculateFRAMESStats(results, totalTime)
 	printFRAMESSummary(stats)
 
-	if err := saveResults(results, *output); err != nil {
+	if err := saveFRAMESResults(results, *output); err != nil {
 		log.Printf("Warning: Failed to save results: %v", err)
 	} else {
 		log.Printf("Results saved to %s", *output)
@@ -253,23 +253,23 @@ func runFRAMESQuestion(apiURL string, q FRAMESQuestion, mode string) FRAMESResul
 	reasoningDepth := evaluateReasoningDepth(result.Reasoning, q.HopCount)
 	sourceDiversity := evaluateSourceDiversity(result.Sources)
 
-	success := result.Answer != "" && 
+	success := result.Answer != "" &&
 		len(result.Sources) >= q.RequiredSources &&
 		factuality > 0.5
 
 	return FRAMESResult{
-		Question:          q.Question,
-		ExpectedAnswer:    q.Answer,
-		ActualAnswer:      result.Answer,
-		Category:          q.Category,
-		ProcessingTime:    processingTime,
-		FactualityScore:   factuality,
-		ReasoningDepth:    reasoningDepth,
-		SourceDiversity:   sourceDiversity,
-		SourceCount:       len(result.Sources),
-		HopCount:          q.HopCount,
-		Success:           success,
-		Mode:              mode,
+		Question:        q.Question,
+		ExpectedAnswer:  q.Answer,
+		ActualAnswer:    result.Answer,
+		Category:        q.Category,
+		ProcessingTime:  processingTime,
+		FactualityScore: factuality,
+		ReasoningDepth:  reasoningDepth,
+		SourceDiversity: sourceDiversity,
+		SourceCount:     len(result.Sources),
+		HopCount:        q.HopCount,
+		Success:         success,
+		Mode:            mode,
 	}
 }
 
@@ -281,13 +281,13 @@ func evaluateFactuality(answer string, keywords []string) float64 {
 			matches++
 		}
 	}
-	
+
 	if len(keywords) == 0 {
 		return 0.5
 	}
-	
+
 	score := float64(matches) / float64(len(keywords))
-	
+
 	// Bonus for longer, detailed answers
 	if len(answer) > 200 {
 		score += 0.1
@@ -295,11 +295,11 @@ func evaluateFactuality(answer string, keywords []string) float64 {
 	if len(answer) > 500 {
 		score += 0.1
 	}
-	
+
 	if score > 1.0 {
 		score = 1.0
 	}
-	
+
 	return score
 }
 
@@ -307,20 +307,20 @@ func evaluateReasoningDepth(reasoning string, expectedHops int) float64 {
 	if reasoning == "" {
 		return 0.0
 	}
-	
+
 	// Count reasoning steps
 	steps := strings.Count(reasoning, "\n")
 	if steps == 0 {
 		steps = 1
 	}
-	
+
 	// Compare with expected hops
 	score := float64(steps) / float64(expectedHops*3) // Each hop ~3 steps
-	
+
 	if score > 1.0 {
 		score = 1.0
 	}
-	
+
 	return score
 }
 
@@ -328,7 +328,7 @@ func evaluateSourceDiversity(sources []Source) float64 {
 	if len(sources) == 0 {
 		return 0.0
 	}
-	
+
 	// Extract unique domains
 	domains := make(map[string]bool)
 	for _, src := range sources {
@@ -339,10 +339,10 @@ func evaluateSourceDiversity(sources []Source) float64 {
 			domains[domain] = true
 		}
 	}
-	
+
 	// Diversity = unique domains / total sources
 	diversity := float64(len(domains)) / float64(len(sources))
-	
+
 	return diversity
 }
 
@@ -382,22 +382,22 @@ func printFRAMESSummary(stats FRAMESStats) {
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("           FRAMES BENCHMARK RESULTS")
 	fmt.Println(strings.Repeat("=", 60))
-	
+
 	fmt.Printf("\n📊 Overall Statistics:\n")
 	fmt.Printf("  Total Questions: %d\n", stats.TotalQuestions)
 	fmt.Printf("  ✅ Success: %d\n", stats.SuccessCount)
 	fmt.Printf("  ❌ Failed: %d\n", stats.FailCount)
 	fmt.Printf("  Success Rate: %.2f%%\n", stats.SuccessRate)
-	
+
 	fmt.Printf("\n🎯 Quality Metrics:\n")
 	fmt.Printf("  Avg Factuality Score: %.2f/1.0\n", stats.AvgFactuality)
 	fmt.Printf("  Avg Reasoning Depth: %.2f/1.0\n", stats.AvgReasoningDepth)
 	fmt.Printf("  Avg Source Diversity: %.2f/1.0\n", stats.AvgSourceDiv)
-	
+
 	fmt.Printf("\n⏱️  Performance:\n")
 	fmt.Printf("  Average Time: %.2fs per question\n", stats.AvgTime)
 	fmt.Printf("  Total Time: %.2fs\n", stats.TotalTime.Seconds())
-	
+
 	fmt.Println("\n" + strings.Repeat("=", 60))
 }
 
@@ -406,4 +406,12 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func saveFRAMESResults(results []FRAMESResult, filename string) error {
+	data, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, data, 0o644)
 }

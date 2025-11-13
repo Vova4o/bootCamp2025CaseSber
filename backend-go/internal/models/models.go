@@ -41,10 +41,11 @@ type TavilySearchResponse struct {
 }
 
 type TavilyResult struct {
-	Title      string  `json:"title"`
-	URL        string  `json:"url"`
-	Content    string  `json:"content"`
-	Snippet    string  `json:"snippet"`
-	RawContent string  `json:"raw_content,omitempty"`
-	Score      float64 `json:"score"`
+	Title       string  `json:"title"`
+	URL         string  `json:"url"`
+	Content     string  `json:"content"`
+	Snippet     string  `json:"snippet"`
+	RawContent  string  `json:"raw_content,omitempty"`
+	Score       float64 `json:"score"`
+	Credibility float64 `json:"credibility"` // Добавлено
 }

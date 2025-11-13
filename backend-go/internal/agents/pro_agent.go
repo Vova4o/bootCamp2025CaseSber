@@ -69,7 +69,16 @@ func (a *ProAgent) ProcessWithContext(
 			log.Printf("⚠️  LLM failed to enhance query, using original: %v", err)
 			reasoningSteps = append(reasoningSteps, "⚠️ Использую оригинальный запрос (LLM недоступен)")
 		} else if enhanced != "" {
+			// Clean up the enhanced query - remove quotes and trim
 			searchQuery = strings.TrimSpace(enhanced)
+			searchQuery = strings.Trim(searchQuery, `"'`)
+			searchQuery = strings.TrimSpace(searchQuery)
+
+			if searchQuery == "" {
+				searchQuery = query
+				log.Printf("⚠️  Enhanced query was empty after cleanup")
+			}
+
 			reasoningSteps = append(reasoningSteps, fmt.Sprintf("✨ Улучшенный запрос: \"%s\"", searchQuery))
 		} else {
 			log.Printf("⚠️  LLM returned empty enhanced query")

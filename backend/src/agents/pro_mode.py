@@ -20,7 +20,7 @@ async def process_pro_mode(
         
         # Шаг 1: Анализ запроса с учетом контекста
         if use_context:
-            reasoning_steps.append("📋 Анализирую запрос с учётом контекста диалога...")
+            reasoning_steps.append("Анализирую запрос с учётом контекста диалога...")
             
             messages = [{
                 "role": "system",
@@ -46,7 +46,7 @@ async def process_pro_mode(
         if not subqueries:
             subqueries = [query]
         
-        reasoning_steps.append(f"🔍 Создано {len(subqueries)} подзапросов: {', '.join(subqueries)}")
+        reasoning_steps.append(f"Создано {len(subqueries)} подзапросов: {', '.join(subqueries)}")
         
         # Шаг 2: Множественный поиск
         all_results = []
@@ -73,7 +73,7 @@ async def process_pro_mode(
             }
         
         # Шаг 3: Анализ фактов
-        reasoning_steps.append("✓ Анализирую и проверяю факты из источников...")
+        reasoning_steps.append("Анализирую и проверяю факты из источников...")
         
         search_context = "\n\n".join([
             f"Источник {i+1}: {r.get('title', '')}\n{r.get('raw_content', r.get('content', ''))[:1000]}\nURL: {r.get('url', '')}"
@@ -81,7 +81,7 @@ async def process_pro_mode(
         ])
         
         # Шаг 4: Синтез ответа с учётом контекста диалога
-        reasoning_steps.append("📝 Формирую итоговый ответ с цитированием источников...")
+        reasoning_steps.append("Формирую итоговый ответ с цитированием источников...")
         
         if use_context:
             system_prompt = """Создайте подробный ответ на основе проверенной информации и контекста диалога.
@@ -123,7 +123,7 @@ async def process_pro_mode(
         
     except Exception as e:
         logger.error(f"Pro mode error: {e}")
-        reasoning_steps.append(f"❌ Ошибка: {str(e)}")
+        reasoning_steps.append(f"Ошибка: {str(e)}")
         return {
             "mode": "pro",
             "query": query,

@@ -46,7 +46,6 @@ class Settings(BaseSettings):
     
     @property
     def get_cors_origins(self) -> List[str]:
-        """Преобразует строку в список если нужно"""
         if isinstance(self.cors_origins, str):
             if self.cors_origins.startswith('['):
                 try:

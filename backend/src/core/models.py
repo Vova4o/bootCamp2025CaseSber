@@ -12,12 +12,12 @@ class ChatSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Убираем lazy="selectinload" - это неправильный синтаксис
+
     messages = relationship(
         "ChatMessage", 
         back_populates="session", 
         cascade="all, delete-orphan",
-        lazy="select"  # Изменили на select
+        lazy="select"  
     )
     
     def to_dict(self):

@@ -13,7 +13,6 @@ class RouterAgent:
     def __init__(self, llm_client):
         self.llm_client = llm_client
         
-        # Ключевые слова для быстрой эвристики
         self.pro_keywords = [
             # Сравнения и анализ
             "сравни", "сравнить", "compare", "отличие", "difference", "versus", "vs",
@@ -75,10 +74,10 @@ class RouterAgent:
                 "reason": str
             }
         """
-        # Шаг 1: Быстрая эвристика
+
         heuristic_result = self._heuristic_check(query, context_exists)
         
-        # Если уверенность высокая (>0.8), возвращаем результат эвристики
+        # Если уверенность высокая (>0.8), возвращаем результат
         if heuristic_result["confidence"] > 0.8 or not use_llm:
             logger.info(
                 f"Router decision (heuristic): {heuristic_result['mode']} "

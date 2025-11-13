@@ -11,10 +11,10 @@ import (
 )
 
 type ProAgent struct {
-	searchClient       *tools.SearchClient
-	llmClient          *tools.LLMClient
-	reranker           *tools.BM25Reranker
-	credibilityScorer  *tools.CredibilityScorer
+	searchClient      *tools.SearchClient
+	llmClient         *tools.LLMClient
+	reranker          *tools.BM25Reranker
+	credibilityScorer *tools.CredibilityScorer
 }
 
 func NewProAgent(searchClient *tools.SearchClient, llmClient *tools.LLMClient) *ProAgent {
@@ -65,51 +65,60 @@ func (a *ProAgent) ProcessWithContext(
 Перефразируй текущий вопрос так, чтобы он был самодостаточным и включал важную информацию из контекста. Улучшенный поисковый запрос:`, contextPrompt.String(), query)
 
 		enhanced, err := a.llmClient.Complete(ctx, enhancePrompt, 0.3, 200)
-		if err == nil && enhanced != "" {
-			searchQuery = enhanced
-			reasoningSteps = append(reasoningSteps, fmt.Sprintf("Улучшенный запрос: %s", searchQuery))
+		if err != nil {
+			log.Printf("⚠️  LLM failed to enhance query, using original: %v", err)
+			reasoningSteps = append(reasoningSteps, "⚠️ Использую оригинальный запрос (LLM недоступен)")
+		} else if enhanced != "" {
+			searchQuery = strings.TrimSpace(enhanced)
+			reasoningSteps = append(reasoningSteps, fmt.Sprintf("✨ Улучшенный запрос: \"%s\"", searchQuery))
+		} else {
+			log.Printf("⚠️  LLM returned empty enhanced query")
+			reasoningSteps = append(reasoningSteps, "⚠️ Использую оригинальный запрос")
 		}
 	} else {
-		reasoningSteps = append(reasoningSteps, "Обрабатываю первый запрос без контекста")
+		reasoningSteps = append(reasoningSteps, "📝 Обрабатываю первый запрос без контекста")
 	}
 
 	// Step 2: Определяем, нужен ли multi-hop
 	needsMultiHop := a.detectMultiHop(query)
-	
+
 	var allResults []models.TavilyResult
-	
+
 	if needsMultiHop {
 		reasoningSteps = append(reasoningSteps, "Обнаружен сложный вопрос - применяю multi-hop reasoning")
-		
+
 		// Разбиваем на подвопросы
 		subQueries := a.generateSubQueries(ctx, searchQuery)
 		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Разбил на %d подвопроса", len(subQueries)))
-		
+
 		// Ищем ответы на каждый подвопрос
 		for i, subQuery := range subQueries {
 			reasoningSteps = append(reasoningSteps, fmt.Sprintf("Подзапрос %d: %s", i+1, subQuery))
-			
+
 			results, err := a.searchClient.Search(ctx, subQuery, 5, true)
 			if err != nil {
 				log.Printf("Sub-query search failed: %v", err)
 				continue
 			}
-			
+
 			allResults = append(allResults, results.Results...)
 		}
-		
+
 		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Собрано %d источников из всех подзапросов", len(allResults)))
 	} else {
 		// Обычный поиск
-		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Ищу информацию по запросу: %s", searchQuery))
-		
+		log.Printf("🔎 Executing search with query: %s", searchQuery)
+		reasoningSteps = append(reasoningSteps, fmt.Sprintf("🔎 Ищу информацию по запросу: \"%s\"", searchQuery))
+
 		searchResults, err := a.searchClient.Search(ctx, searchQuery, 15, true)
 		if err != nil {
+			log.Printf("❌ Search failed: %v", err)
 			return nil, fmt.Errorf("search failed: %w", err)
 		}
-		
+
 		allResults = searchResults.Results
-		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Найдено %d источников", len(allResults)))
+		log.Printf("✅ Search returned %d results", len(allResults))
+		reasoningSteps = append(reasoningSteps, fmt.Sprintf("✅ Найдено %d источников", len(allResults)))
 	}
 
 	if len(allResults) == 0 {
@@ -229,7 +238,7 @@ func (a *ProAgent) ProcessWithContext(
 // detectMultiHop определяет, нужен ли multi-hop reasoning
 func (a *ProAgent) detectMultiHop(query string) bool {
 	queryLower := strings.ToLower(query)
-	
+
 	multiHopIndicators := []string{
 		"сравни", "отличия", "различия", "разница между",
 		"как связаны", "взаимосвязь", "влияние",
@@ -238,19 +247,19 @@ func (a *ProAgent) detectMultiHop(query string) bool {
 		"compare", "difference", "relationship",
 		"causes and effects", "process of",
 	}
-	
+
 	for _, indicator := range multiHopIndicators {
 		if strings.Contains(queryLower, indicator) {
 			return true
 		}
 	}
-	
+
 	// Если вопрос длинный и содержит несколько смысловых единиц
 	words := strings.Fields(query)
 	if len(words) > 15 {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -270,7 +279,7 @@ func (a *ProAgent) generateSubQueries(ctx context.Context, query string) []strin
 
 	lines := strings.Split(response, "\n")
 	subQueries := make([]string, 0)
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		// Удаляем нумерацию если есть
@@ -301,10 +310,10 @@ func (a *ProAgent) crossVerify(results []models.TavilyResult) string {
 
 	// Простая эвристика - ищем повторяющиеся факты
 	commonPhrases := make(map[string]int)
-	
+
 	for _, result := range results {
 		words := strings.Fields(strings.ToLower(result.Content))
-		
+
 		// Ищем фразы из 3-4 слов
 		for i := 0; i < len(words)-2; i++ {
 			phrase := strings.Join(words[i:i+3], " ")

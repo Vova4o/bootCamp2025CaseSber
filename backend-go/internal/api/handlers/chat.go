@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -125,6 +126,7 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		conversationHistory,
 	)
 	if err != nil {
+		log.Printf("❌ Error processing query: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -42,10 +42,10 @@ services:
       - DEBUG=true
       - DATABASE_URL=postgres://research_user:research_pass@postgres:5432/research_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
-      - OPENAI_API_KEY=\${OPENAI_API_KEY}
-      - OPENAI_MODEL=\${OPENAI_MODEL:-gpt-4}
-      - QWEN_API_URL=\${QWEN_API_URL}
-      - QWEN_MODEL=\${QWEN_MODEL:-qwen-turbo}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - QWEN_API_URL=${QWEN_API_URL}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-turbo}
     depends_on:
       postgres:
         condition: service_healthy

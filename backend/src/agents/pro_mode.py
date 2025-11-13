@@ -1,103 +1,162 @@
 from typing import Dict, List
-import time
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
-async def process_pro_mode(
+
+async def process_pro_mode_with_context(
     query: str,
     search_client,
     llm_client,
+    conversation_history: List[Dict] = None,
     max_results: int = 10
 ) -> Dict:
+    """
+    Pro Mode с учётом контекста предыдущих сообщений.
+    
+    Args:
+        query: Текущий запрос
+        search_client: Клиент для поиска
+        llm_client: Клиент LLM
+        conversation_history: История диалога [{"role": "user/assistant", "content": "..."}]
+        max_results: Максимум результатов поиска
+    """
     start_time = time.time()
     reasoning_steps = []
     
     try:
-        # Шаг 1: Генерация подзапросов
-        reasoning_steps.append("📋 Анализирую запрос и генерирую подзапросы...")
-        
-        messages = [{
-            "role": "system",
-            "content": "Разбейте запрос на 2-3 конкретных поисковых подзапроса. Отвечайте в формате: 1. запрос\n2. запрос\n3. запрос"
-        }, {
-            "role": "user",
-            "content": f"Разбейте этот вопрос на подзапросы: {query}"
-        }]
-        
-        subqueries_text = await llm_client.chat_completion(messages, temperature=0.5, max_tokens=200)
-        subqueries = [q.strip() for q in subqueries_text.split('\n') if q.strip() and not q.strip().startswith('#')][:3]
-        
-        if not subqueries:
-            subqueries = [query]
-        
-        reasoning_steps.append(f"🔍 Создано {len(subqueries)} подзапросов: {', '.join(subqueries)}")
-        
-        # Шаг 2: Множественный поиск
-        all_results = []
-        for subquery in subqueries:
-            results = await search_client.search(
-                query=subquery,
-                max_results=max_results,
-                include_raw_content=True
+        # Шаг 1: Анализ контекста и формирование улучшенного запроса
+        if conversation_history and len(conversation_history) > 0:
+            reasoning_steps.append("🔍 Анализирую контекст предыдущего диалога...")
+            
+            # Формируем контекст для LLM
+            context_prompt = "Предыдущая беседа:\n"
+            for msg in conversation_history[-6:]:  # Последние 3 пары вопрос-ответ
+                role = "Пользователь" if msg["role"] == "user" else "Ассистент"
+                context_prompt += f"\n{role}: {msg['content']}\n"
+            
+            # Улучшаем запрос с учётом контекста
+            enhanced_query = await llm_client.chat_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Ты помощник, который улучшает поисковые запросы с учётом контекста диалога. Перефразируй текущий вопрос так, чтобы он был самодостаточным и включал важную информацию из контекста."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"{context_prompt}\n\nТекущий вопрос: {query}\n\nУлучшенный поисковый запрос:"
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=200
             )
-            all_results.extend(results.get("results", []))
+            
+            reasoning_steps.append(f"✨ Улучшенный запрос: {enhanced_query}")
+            search_query = enhanced_query
+        else:
+            search_query = query
+            reasoning_steps.append("📝 Обрабатываю первый запрос без контекста")
         
-        reasoning_steps.append(f"📊 Получено {len(all_results)} результатов из поиска")
+        # Шаг 2: Поиск информации
+        reasoning_steps.append(f"🔎 Ищу информацию по запросу: {search_query}")
+        search_results = await search_client.search(
+            query=search_query,
+            max_results=max_results,
+            include_raw_content=True
+        )
         
-        if not all_results:
+        if not search_results.get("results"):
             return {
-                "mode": "pro",
                 "query": query,
-                "answer": "Не удалось найти достаточно информации для анализа.",
+                "mode": "pro",
+                "answer": "Не удалось найти релевантную информацию.",
                 "sources": [],
-                "reasoning_steps": reasoning_steps,
-                "search_queries": subqueries,
-                "response_time": time.time() - start_time
+                "reasoning": "\n".join(reasoning_steps),
+                "processing_time": time.time() - start_time,
+                "timestamp": time.time(),
+                "context_used": len(conversation_history) > 0 if conversation_history else False
             }
         
-        # Шаг 3: Анализ фактов
-        reasoning_steps.append("✓ Анализирую и проверяю факты из источников...")
+        reasoning_steps.append(f"✅ Найдено {len(search_results['results'])} источников")
         
-        context = "\n\n".join([
-            f"Источник {i+1}: {r.get('title', '')}\n{r.get('raw_content', r.get('content', ''))[:1000]}\nURL: {r.get('url', '')}"
-            for i, r in enumerate(all_results[:5])
+        # Шаг 3: Формирование ответа с учётом контекста
+        sources_context = "\n\n".join([
+            f"Источник {i+1} ({r.get('title', 'Unknown')}):\n{r.get('content', r.get('snippet', ''))}"
+            for i, r in enumerate(search_results["results"][:5])
         ])
         
-        # Шаг 4: Синтез ответа
-        reasoning_steps.append("📝 Формирую итоговый ответ с цитированием источников...")
+        # Собираем messages для LLM
+        llm_messages = [
+            {
+                "role": "system",
+                "content": """Ты исследовательский ассистент в режиме Pro. 
+                Твоя задача - дать подробный, хорошо обоснованный ответ с учётом:
+                1. Контекста предыдущей беседы
+                2. Найденных источников
+                3. Проверки фактов
+                
+                Формат ответа:
+                - Прямой ответ на вопрос
+                - Подтверждение фактами из источников
+                - Цитирование источников
+                - Если информация противоречива - укажи это"""
+            }
+        ]
         
-        messages = [{
-            "role": "system",
-            "content": "Создайте подробный ответ на основе проверенной информации. Включите цитирование источников [1], [2] и структурируйте ответ."
-        }, {
+        # Добавляем контекст диалога
+        if conversation_history:
+            for msg in conversation_history[-4:]:  # Последние 2 пары
+                llm_messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+        
+        # Добавляем текущий вопрос и источники
+        llm_messages.append({
             "role": "user",
-            "content": f"Вопрос: {query}\n\nИнформация из источников:\n{context}\n\nСоздайте полный ответ с анализом и выводами."
-        }]
+            "content": f"Вопрос: {query}\n\nНайденная информация:\n{sources_context}\n\nОтвет:"
+        })
         
-        answer = await llm_client.chat_completion(messages, temperature=0.5, max_tokens=1500)
+        reasoning_steps.append("💡 Формирую ответ с учётом всех данных...")
         
-        reasoning_steps.append("✅ Ответ готов")
+        answer = await llm_client.chat_completion(
+            messages=llm_messages,
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        # Форматируем источники
+        formatted_sources = [
+            {
+                "title": r.get("title", "Unknown"),
+                "url": r.get("url", "#"),
+                "snippet": r.get("snippet", "")[:200],
+                "credibility": 0.85  # TODO: реальная оценка достоверности
+            }
+            for r in search_results["results"][:5]
+        ]
         
         return {
-            "mode": "pro",
             "query": query,
+            "mode": "pro",
             "answer": answer,
-            "sources": all_results[:5],
-            "reasoning_steps": reasoning_steps,
-            "search_queries": subqueries,
-            "response_time": time.time() - start_time
+            "sources": formatted_sources,
+            "reasoning": "\n".join(reasoning_steps),
+            "processing_time": time.time() - start_time,
+            "timestamp": time.time(),
+            "context_used": len(conversation_history) > 0 if conversation_history else False
         }
         
     except Exception as e:
-        logger.error(f"Pro mode error: {e}")
-        reasoning_steps.append(f"❌ Ошибка: {str(e)}")
+        logger.error(f"Pro mode with context error: {e}")
         return {
-            "mode": "pro",
             "query": query,
-            "answer": f"Произошла ошибка при обработке: {str(e)}",
+            "mode": "pro",
+            "answer": f"Ошибка обработки: {str(e)}",
             "sources": [],
-            "reasoning_steps": reasoning_steps,
-            "search_queries": [],
-            "response_time": time.time() - start_time
+            "reasoning": "\n".join(reasoning_steps + [f"❌ Ошибка: {str(e)}"]),
+            "processing_time": time.time() - start_time,
+            "timestamp": time.time(),
+            "context_used": False
         }

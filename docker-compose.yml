@@ -20,6 +20,7 @@ services:
       retries: 5
     networks:
       - research_network
+    restart: unless-stopped
 
   # Redis
   redis:
@@ -37,73 +38,68 @@ services:
       retries: 5
     networks:
       - research_network
-
-  # SearXNG
-  searxng:
-    image: searxng/searxng:latest
-    container_name: research_searxng
-    ports:
-      - "8999:8080"
-    environment:
-      - SEARXNG_SECRET=${SEARXNG_SECRET:-mysecretkey}
-      - SEARXNG_BASE_URL=http://localhost:8999/
-    volumes:
-      - ./searxng:/etc/searxng:rw
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - research_network
     restart: unless-stopped
 
-  # Tavily Adapter
-  tavily-adapter:
-    build: ./searxng/simple_tavily_adapter
-    container_name: research_tavily
-    ports:
-      - "8000:8000"
-    environment:
-      - SEARXNG_URL=http://searxng:8080
-    depends_on:
-      - searxng
-    networks:
-      - research_network
-    restart: unless-stopped
-
-  # Backend
+  # Backend (FastAPI + DuckDuckGo)
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: research_backend
     ports:
       - "8080:8080"
     environment:
+      # Database
       - DATABASE_URL=postgresql://research_user:research_pass@postgres:5432/research_db
+      
+      # Redis
       - REDIS_URL=redis://redis:6379
-      - TAVILY_URL=http://tavily-adapter:8000
-      - SEARXNG_URL=http://searxng:8080
+      
+      # Search Engine
+      - SEARCH_ENGINE=duckduckgo
+      - SEARCH_REGION=${SEARCH_REGION:-wt-wt}
+      
+      # LLM Provider
       - LLM_PROVIDER=${LLM_PROVIDER:-local}
       - LLM_API_URL=${LLM_API_URL}
       - LLM_API_KEY=${LLM_API_KEY:-dummy}
+      
+      # OpenAI (optional)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4-turbo-preview}
+      
+      # Router
       - USE_LLM_ROUTER=${USE_LLM_ROUTER:-true}
+      
+      # Search Settings
+      - MAX_RESULTS_SIMPLE=${MAX_RESULTS_SIMPLE:-5}
+      - MAX_RESULTS_PRO=${MAX_RESULTS_PRO:-10}
+      - MAX_CONTENT_LENGTH=${MAX_CONTENT_LENGTH:-2500}
+      
+      # Context Settings
+      - MAX_CONTEXT_MESSAGES=${MAX_CONTEXT_MESSAGES:-10}
+      - MAX_CONTEXT_TOKENS=${MAX_CONTEXT_TOKENS:-4000}
+      
+      # CORS
       - CORS_ORIGINS=["http://localhost:3000"]
-      - MAX_RESULTS_SIMPLE=5
-      - MAX_RESULTS_PRO=10
+      
+      # Server
+      - HOST=0.0.0.0
+      - PORT=8080
     volumes:
       - ./backend:/app
+      - /app/.venv
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      tavily-adapter:
-        condition: service_started
     networks:
       - research_network
     restart: unless-stopped
     command: uvicorn src.api.main:app --host 0.0.0.0 --port 8080 --reload
 
-  # Frontend
+  # Frontend (Next.js)
   frontend:
     build:
       context: ./frontend
@@ -130,4 +126,6 @@ networks:
 
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local

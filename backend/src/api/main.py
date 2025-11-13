@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy.sql import func
 from typing import Optional, List
 import logging
 
@@ -10,51 +12,61 @@ from ..core.config import settings
 from ..core.database import get_db, engine, Base
 from ..core.models import SearchHistory, ChatSession, ChatMessage
 from ..tools.llm_factory import create_llm_client
-from ..tools.search_client import SearchClient
-from ..agents.simple_mode import process_simple_mode
-from ..agents.pro_mode import process_pro_mode
-from ..agents.router_agent import RouterAgent
+from ..tools.duckduckgo_client import DuckDuckGoClient
+from ..agents.langgraph_pipeline import ResearchGraph
 from ..utils.context_manager import ContextManager
 
-# Logging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# App
+# Initialize FastAPI application
 app = FastAPI(
     title="Research Pro Mode API",
-    version="1.0.0",
-    description="Умный поисковый ассистент с мультиагентной системой"
+    version="2.0.0",
+    description="Multi-agent research assistant with LangGraph pipeline and DuckDuckGo search"
 )
 
-# CORS
+# Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.get_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Клиенты (синглтоны)
+# Initialize singleton clients
 llm_client = create_llm_client(
     provider=settings.llm_provider,
     api_key=settings.openai_api_key if settings.llm_provider == "openai" else settings.llm_api_key,
     base_url=settings.llm_api_url if settings.llm_provider == "local" else None,
     model=settings.openai_model if settings.llm_provider == "openai" else None
 )
-search_client = SearchClient(settings.tavily_url)
-context_manager = ContextManager(max_messages=10, max_tokens=4000)
-router_agent = RouterAgent(llm_client)
+search_client = DuckDuckGoClient(max_workers=3)
+context_manager = ContextManager(
+    max_messages=settings.max_context_messages,
+    max_tokens=settings.max_context_tokens
+)
 
-# Pydantic Models
+# Initialize LangGraph research pipeline
+research_graph = ResearchGraph(
+    llm_client=llm_client,
+    search_client=search_client,
+    context_manager=context_manager,
+    settings=settings
+)
+
+# Pydantic request/response models
 class SearchRequest(BaseModel):
+    """Request model for search endpoint"""
     query: str
-    mode: str = "auto"  # auto, simple, pro
+    mode: str = "auto"
     session_id: Optional[str] = None
     previous_messages: Optional[List[dict]] = None
 
 class SearchResponse(BaseModel):
+    """Response model for search results"""
     query: str
     mode: str
     answer: str
@@ -64,137 +76,149 @@ class SearchResponse(BaseModel):
     response_time: float
     session_id: Optional[str] = None
     context_used: Optional[bool] = False
-    router_decision: Optional[dict] = None  # Информация о выборе режима
+    router_decision: Optional[dict] = None
 
 class CreateSessionRequest(BaseModel):
+    """Request model for creating chat session"""
     mode: str = "auto"
 
 class SendMessageRequest(BaseModel):
+    """Request model for sending message to session"""
     query: str
     mode: str = "auto"
 
-# Events
+# Application lifecycle events
 @app.on_event("startup")
 async def startup():
+    """Initialize database and log configuration on startup"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    logger.info("✓ Database initialized")
-    logger.info(f"✓ LLM Provider: {settings.llm_provider}")
-    logger.info("✓ Router Agent initialized")
+    
+    logger.info("Database initialized successfully")
+    logger.info(f"LLM Provider: {settings.llm_provider}")
+    logger.info(f"Search Engine: DuckDuckGo (region: {settings.search_region})")
+    logger.info("LangGraph pipeline initialized")
 
 @app.on_event("shutdown")
 async def shutdown():
+    """Clean up resources on shutdown"""
     await llm_client.close()
     await search_client.close()
-    logger.info("✓ Connections closed")
+    logger.info("All connections closed successfully")
 
-# Basic Routes
+# Basic endpoints
 @app.get("/")
 async def root():
+    """Root endpoint with service information"""
     return {
         "service": "Research Pro Mode API",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "running",
         "llm_provider": settings.llm_provider,
+        "search_engine": "DuckDuckGo",
+        "search_region": settings.search_region,
+        "pipeline": "LangGraph",
         "features": {
             "auto_routing": True,
             "context_management": True,
-            "modes": ["auto", "simple", "pro"]
+            "modes": ["auto", "simple", "pro"],
+            "graph_visualization": True
         }
     }
 
 @app.get("/api/health")
 async def health():
+    """Health check endpoint"""
     return {
         "status": "ok",
-        "llm_provider": settings.llm_provider
+        "llm_provider": settings.llm_provider,
+        "search_engine": "DuckDuckGo",
+        "pipeline": "LangGraph"
     }
 
-# Search Route (без сессии)
+@app.get("/api/graph/visualize")
+async def visualize_graph():
+    """
+    Visualize the LangGraph pipeline structure.
+    Returns Mermaid diagram markup.
+    """
+    try:
+        mermaid = research_graph.visualize()
+        return {
+            "format": "mermaid",
+            "diagram": mermaid
+        }
+    except Exception as e:
+        logger.error(f"Graph visualization failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Search endpoint
 @app.post("/api/search", response_model=SearchResponse)
 async def search(request: SearchRequest, db: AsyncSession = Depends(get_db)):
-    mode = request.mode
-    router_decision = None
+    """
+    Execute search query through LangGraph pipeline.
     
-    # AUTO MODE: Используем Router Agent
-    if mode == "auto":
-        context_exists = bool(request.previous_messages and len(request.previous_messages) > 0)
-        
-        router_decision = await router_agent.route(
-            query=request.query,
-            use_llm=settings.use_llm_router,  # Добавим в конфиг
-            context_exists=context_exists
-        )
-        
-        mode = router_decision["mode"]
-        logger.info(
-            f"🤖 Router selected '{mode}' mode with {router_decision['confidence']:.0%} confidence: "
-            f"{router_decision['reason']}"
-        )
+    Pipeline stages:
+        1. Router determines query complexity
+        2. Simple or Pro search based on routing
+        3. Analysis and answer synthesis
     
-    # Simple mode ВСЕГДА без контекста
-    if mode == "simple":
-        result = await process_simple_mode(
-            request.query,
-            search_client,
-            llm_client,
-            settings.max_results_simple
-        )
-    else:
-        # Pro mode может использовать контекст
-        context = None
-        if request.previous_messages:
-            messages_dict = request.previous_messages
-            if context_manager.should_use_context(request.query, messages_dict):
-                context = context_manager.build_context(messages_dict)
-        
-        result = await process_pro_mode(
-            request.query,
-            search_client,
-            llm_client,
-            settings.max_results_pro,
-            context=context,
-            previous_messages=request.previous_messages
-        )
+    Returns enriched search results with reasoning steps.
+    """
+    logger.info(f"Search request: '{request.query}' (mode: {request.mode})")
     
-    # Добавляем информацию о решении роутера
-    result["router_decision"] = router_decision
-    
-    # Сохранение в БД
     try:
-        history = SearchHistory(
+        # Execute LangGraph pipeline
+        result = await research_graph.run(
             query=request.query,
-            mode=result["mode"],
-            answer=result["answer"],
-            sources=result.get("sources", []),
-            reasoning_steps=result.get("reasoning_steps"),
-            response_time=result["response_time"],
-            session_id=request.session_id
+            previous_messages=request.previous_messages,
+            mode=request.mode
         )
-        db.add(history)
-        await db.commit()
+        
+        # Save to database
+        try:
+            history = SearchHistory(
+                query=request.query,
+                mode=result["mode"],
+                answer=result["answer"],
+                sources=result.get("sources", []),
+                reasoning_steps=result.get("reasoning_steps"),
+                response_time=result["response_time"],
+                session_id=request.session_id
+            )
+            db.add(history)
+            await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to save search history: {e}")
+        
+        return result
+        
     except Exception as e:
-        logger.error(f"Failed to save history: {e}")
-    
-    return result
+        logger.error(f"Search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Chat Session Routes
+# Chat session endpoints
 @app.post("/api/chat/session")
 async def create_chat_session(
     request: CreateSessionRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Создание новой чат-сессии"""
+    """Create new chat session"""
     try:
         session = ChatSession(mode=request.mode)
         db.add(session)
         await db.commit()
         await db.refresh(session)
         
-        logger.info(f"Created chat session: {session.id} with mode: {request.mode}")
+        logger.info(f"Created chat session: {session.id} (mode: {request.mode})")
         
-        # Возвращаем простой словарь без загрузки сообщений
-        return session.to_dict()
+        return {
+            "id": session.id,
+            "mode": session.mode,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+            "messages": []
+        }
     except Exception as e:
         logger.error(f"Failed to create session: {e}")
         await db.rollback()
@@ -205,9 +229,8 @@ async def get_chat_session(
     session_id: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Получение истории чат-сессии"""
+    """Retrieve chat session with message history"""
     try:
-        # Явно загружаем сообщения через selectinload
         result = await db.execute(
             select(ChatSession)
             .options(selectinload(ChatSession.messages))
@@ -218,7 +241,6 @@ async def get_chat_session(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         
-        # Теперь можем безопасно получить доступ к messages
         return {
             "id": session.id,
             "mode": session.mode,
@@ -229,7 +251,7 @@ async def get_chat_session(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get session: {e}")
+        logger.error(f"Failed to retrieve session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat/session/{session_id}/message")
@@ -238,9 +260,12 @@ async def send_message(
     request: SendMessageRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Отправка сообщения в чат-сессию"""
+    """
+    Send message to chat session and get response.
+    Uses LangGraph pipeline with conversation context.
+    """
     try:
-        # Проверяем существование сессии
+        # Verify session exists
         result = await db.execute(
             select(ChatSession).where(ChatSession.id == session_id)
         )
@@ -249,7 +274,7 @@ async def send_message(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         
-        # Получаем историю сообщений
+        # Retrieve message history
         messages_result = await db.execute(
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
@@ -258,7 +283,7 @@ async def send_message(
         previous_messages = messages_result.scalars().all()
         messages_dict = [msg.to_dict() for msg in previous_messages]
         
-        # Сохраняем сообщение пользователя
+        # Save user message
         user_message = ChatMessage(
             session_id=session_id,
             role="user",
@@ -267,55 +292,16 @@ async def send_message(
         db.add(user_message)
         await db.flush()
         
-        # Определяем режим
-        mode = request.mode
-        router_decision = None
+        logger.info(f"Processing message in session {session_id}")
         
-        # AUTO MODE: Используем Router Agent
-        if mode == "auto":
-            context_exists = len(messages_dict) > 0
-            
-            router_decision = await router_agent.route(
-                query=request.query,
-                use_llm=settings.use_llm_router,
-                context_exists=context_exists
-            )
-            
-            mode = router_decision["mode"]
-            logger.info(
-                f"🤖 Session {session_id}: Router selected '{mode}' mode "
-                f"({router_decision['confidence']:.0%}) - {router_decision['reason']}"
-            )
+        # Execute pipeline with context
+        result = await research_graph.run(
+            query=request.query,
+            previous_messages=messages_dict,
+            mode=request.mode
+        )
         
-        # Simple Mode - ВСЕГДА без контекста
-        if mode == "simple":
-            logger.info(f"Processing in Simple Mode (no context) for session {session_id}")
-            result = await process_simple_mode(
-                request.query,
-                search_client,
-                llm_client,
-                settings.max_results_simple
-            )
-        else:
-            # Pro Mode - с контекстом если нужен
-            context = None
-            
-            if context_manager.should_use_context(request.query, messages_dict):
-                context = context_manager.build_context(messages_dict)
-                logger.info(f"Using context for Pro Mode in session {session_id}")
-            else:
-                logger.info(f"No context needed for Pro Mode in session {session_id}")
-            
-            result = await process_pro_mode(
-                request.query,
-                search_client,
-                llm_client,
-                settings.max_results_pro,
-                context=context,
-                previous_messages=messages_dict
-            )
-        
-        # Сохраняем ответ ассистента
+        # Save assistant message
         assistant_message = ChatMessage(
             session_id=session_id,
             role="assistant",
@@ -325,8 +311,7 @@ async def send_message(
         )
         db.add(assistant_message)
         
-        # Обновляем время сессии
-        from sqlalchemy.sql import func
+        # Update session timestamp
         session.updated_at = func.now()
         
         await db.commit()
@@ -340,19 +325,16 @@ async def send_message(
             "processing_time": result["response_time"],
             "timestamp": assistant_message.timestamp.isoformat(),
             "session_id": session_id,
-            "context_used": result.get("context_used", False)
+            "context_used": result.get("context_used", False),
+            "router_decision": result.get("router_decision")
         }
-        
-        # Добавляем информацию о решении роутера
-        if router_decision:
-            response["router_decision"] = router_decision
         
         return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to send message: {e}")
+        logger.error(f"Failed to process message: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -361,7 +343,7 @@ async def delete_chat_session(
     session_id: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Удаление чат-сессии"""
+    """Delete chat session and all associated messages"""
     try:
         result = await db.execute(
             select(ChatSession).where(ChatSession.id == session_id)
@@ -374,6 +356,8 @@ async def delete_chat_session(
         await db.delete(session)
         await db.commit()
         
+        logger.info(f"Deleted session: {session_id}")
+        
         return {"status": "deleted", "session_id": session_id}
     except HTTPException:
         raise
@@ -381,9 +365,10 @@ async def delete_chat_session(
         logger.error(f"Failed to delete session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# History endpoints
 @app.get("/api/history")
 async def get_history(limit: int = 20, db: AsyncSession = Depends(get_db)):
-    """Получение истории поисков"""
+    """Retrieve recent search history"""
     try:
         result = await db.execute(
             select(SearchHistory)
@@ -394,5 +379,21 @@ async def get_history(limit: int = 20, db: AsyncSession = Depends(get_db)):
         
         return [item.to_dict() for item in history]
     except Exception as e:
-        logger.error(f"Failed to get history: {e}")
+        logger.error(f"Failed to retrieve history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sessions")
+async def get_sessions(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    """Retrieve list of all chat sessions"""
+    try:
+        result = await db.execute(
+            select(ChatSession)
+            .order_by(ChatSession.updated_at.desc())
+            .limit(limit)
+        )
+        sessions = result.scalars().all()
+        
+        return [session.to_dict() for session in sessions]
+    except Exception as e:
+        logger.error(f"Failed to retrieve sessions: {e}")
         raise HTTPException(status_code=500, detail=str(e))

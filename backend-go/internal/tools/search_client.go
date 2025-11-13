@@ -116,7 +116,7 @@ func (s *SearchClient) tryInstantAnswer(ctx context.Context, query string, maxRe
 func (s *SearchClient) tryHTMLSearch(ctx context.Context, query string, maxResults int) []models.TavilyResult {
 	// Get HTML search results
 	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", url.QueryEscape(query))
-	
+
 	resp, err := s.client.R().
 		SetContext(ctx).
 		SetHeader("Accept", "text/html").
@@ -144,7 +144,7 @@ func (s *SearchClient) tryHTMLSearch(ctx context.Context, query string, maxResul
 
 		resultURL := strings.TrimSpace(matches[i][1])
 		title := strings.TrimSpace(matches[i][2])
-		
+
 		// Extract snippet
 		snippet := ""
 		if i < len(snippets) && len(snippets[i]) > 1 {

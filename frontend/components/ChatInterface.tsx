@@ -18,6 +18,7 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Load sessions from localStorage on mount
   useEffect(() => {
@@ -102,6 +103,10 @@ export default function ChatInterface() {
 
     if (!currentSession) {
       await createNewChat();
+      // После создания сессии нужно отправить сообщение
+      setTimeout(() => {
+        handleSubmit(e);
+      }, 100);
       return;
     }
 
@@ -140,7 +145,8 @@ export default function ChatInterface() {
       const finalSession = {
         ...updatedSession,
         messages: [...updatedSession.messages, assistantMessage],
-        mode: response.mode as SearchMode,
+        // НЕ перезаписываем mode из ответа - сохраняем выбор пользователя
+        mode: mode,
         updated_at: Math.floor(Date.now() / 1000),
       };
 
@@ -153,6 +159,18 @@ export default function ChatInterface() {
       setCurrentSession(currentSession);
     } finally {
       setLoading(false);
+      // Возвращаем фокус в input после отправки
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  };
+
+  // Обработчик Enter в input
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!loading && query.trim()) {
+        handleSubmit(e as any);
+      }
     }
   };
 
@@ -201,7 +219,9 @@ export default function ChatInterface() {
                 <h2 className="text-2xl font-bold text-gray-200 mb-2">
                   Начните новый поиск
                 </h2>
-                <p className="text-gray-500">Создайте чат или задайте вопрос</p>
+                <p className="text-gray-500">
+                  Создайте чат или задайте вопрос
+                </p>
               </div>
             </div>
           ) : currentSession.messages.length === 0 ? (
@@ -220,7 +240,9 @@ export default function ChatInterface() {
                 key={message.id || idx}
                 message={message}
                 mode={
-                  message.role === "assistant" ? currentSession.mode : undefined
+                  message.role === "assistant"
+                    ? currentSession.mode
+                    : undefined
                 }
               />
             ))
@@ -247,12 +269,15 @@ export default function ChatInterface() {
               />
               <div className="flex-1 flex gap-2 bg-gray-800 rounded-xl p-1">
                 <input
+                  ref={inputRef}
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   placeholder="Задайте вопрос..."
                   disabled={loading}
                   className="flex-1 px-3 bg-transparent border-none focus:outline-none disabled:cursor-not-allowed text-gray-100 placeholder-gray-500"
+                  autoFocus
                 />
                 <button
                   type="submit"

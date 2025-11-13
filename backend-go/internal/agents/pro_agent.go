@@ -67,10 +67,10 @@ func (a *ProAgent) ProcessWithContext(
 		enhanced, err := a.llmClient.Complete(ctx, enhancePrompt, 0.3, 200)
 		if err == nil && enhanced != "" {
 			searchQuery = enhanced
-			reasoningSteps = append(reasoningSteps, fmt.Sprintf("✨ Улучшенный запрос: %s", searchQuery))
+			reasoningSteps = append(reasoningSteps, fmt.Sprintf("Улучшенный запрос: %s", searchQuery))
 		}
 	} else {
-		reasoningSteps = append(reasoningSteps, "📝 Обрабатываю первый запрос без контекста")
+		reasoningSteps = append(reasoningSteps, "Обрабатываю первый запрос без контекста")
 	}
 
 	// Step 2: Определяем, нужен ли multi-hop
@@ -79,15 +79,15 @@ func (a *ProAgent) ProcessWithContext(
 	var allResults []models.TavilyResult
 	
 	if needsMultiHop {
-		reasoningSteps = append(reasoningSteps, "🔗 Обнаружен сложный вопрос - применяю multi-hop reasoning")
+		reasoningSteps = append(reasoningSteps, "Обнаружен сложный вопрос - применяю multi-hop reasoning")
 		
 		// Разбиваем на подвопросы
 		subQueries := a.generateSubQueries(ctx, searchQuery)
-		reasoningSteps = append(reasoningSteps, fmt.Sprintf("📊 Разбил на %d подвопроса", len(subQueries)))
+		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Разбил на %d подвопроса", len(subQueries)))
 		
 		// Ищем ответы на каждый подвопрос
 		for i, subQuery := range subQueries {
-			reasoningSteps = append(reasoningSteps, fmt.Sprintf("🔎 Подзапрос %d: %s", i+1, subQuery))
+			reasoningSteps = append(reasoningSteps, fmt.Sprintf("Подзапрос %d: %s", i+1, subQuery))
 			
 			results, err := a.searchClient.Search(ctx, subQuery, 5, true)
 			if err != nil {
@@ -98,10 +98,10 @@ func (a *ProAgent) ProcessWithContext(
 			allResults = append(allResults, results.Results...)
 		}
 		
-		reasoningSteps = append(reasoningSteps, fmt.Sprintf("✅ Собрано %d источников из всех подзапросов", len(allResults)))
+		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Собрано %d источников из всех подзапросов", len(allResults)))
 	} else {
 		// Обычный поиск
-		reasoningSteps = append(reasoningSteps, fmt.Sprintf("🔎 Ищу информацию по запросу: %s", searchQuery))
+		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Ищу информацию по запросу: %s", searchQuery))
 		
 		searchResults, err := a.searchClient.Search(ctx, searchQuery, 15, true)
 		if err != nil {
@@ -109,7 +109,7 @@ func (a *ProAgent) ProcessWithContext(
 		}
 		
 		allResults = searchResults.Results
-		reasoningSteps = append(reasoningSteps, fmt.Sprintf("✅ Найдено %d источников", len(allResults)))
+		reasoningSteps = append(reasoningSteps, fmt.Sprintf("Найдено %d источников", len(allResults)))
 	}
 
 	if len(allResults) == 0 {
@@ -123,11 +123,11 @@ func (a *ProAgent) ProcessWithContext(
 	}
 
 	// Step 3: Semantic Reranking с BM25
-	reasoningSteps = append(reasoningSteps, "🎯 Применяю семантическую переоценку результатов (BM25)")
+	reasoningSteps = append(reasoningSteps, "Применяю семантическую переоценку результатов (BM25)")
 	allResults = a.reranker.Rerank(searchQuery, allResults)
 
 	// Step 4: Credibility Scoring
-	reasoningSteps = append(reasoningSteps, "⭐ Оцениваю достоверность источников")
+	reasoningSteps = append(reasoningSteps, "Оцениваю достоверность источников")
 	allResults = a.credibilityScorer.RankSources(allResults)
 
 	// Берем топ-10 после reranking
@@ -136,7 +136,7 @@ func (a *ProAgent) ProcessWithContext(
 	}
 
 	// Step 5: Cross-verification (проверка консистентности)
-	reasoningSteps = append(reasoningSteps, "🔍 Проверяю консистентность информации между источниками")
+	reasoningSteps = append(reasoningSteps, "Проверяю консистентность информации между источниками")
 	verification := a.crossVerify(allResults)
 	if verification != "" {
 		reasoningSteps = append(reasoningSteps, verification)

@@ -1,4 +1,10 @@
-export type SearchMode = 'auto' | 'simple' | 'pro';
+export type SearchMode = 
+  | 'auto' 
+  | 'simple' 
+  | 'pro' 
+  | 'pro-social' 
+  | 'pro-academic' 
+  | 'pro-finance';
 
 export interface Source {
   title: string;

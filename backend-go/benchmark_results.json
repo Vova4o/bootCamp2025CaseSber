@@ -1,0 +1,92 @@
+[
+  {
+    "question": "What is the capital of France?",
+    "expected_answer": "Paris",
+    "actual_answer": "ERROR: LLM completion failed: LLM client not initialized",
+    "category": "geography",
+    "processing_time": 2202177583,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "Who wrote Romeo and Juliet?",
+    "expected_answer": "William Shakespeare",
+    "actual_answer": "ERROR: LLM completion failed: LLM client not initialized",
+    "category": "literature",
+    "processing_time": 967139041,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "What is the largest planet in our solar system?",
+    "expected_answer": "Jupiter",
+    "actual_answer": "Не удалось найти релевантную информацию по вашему запросу.",
+    "category": "science",
+    "processing_time": 225778750,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "In what year did World War II end?",
+    "expected_answer": "1945",
+    "actual_answer": "ERROR: LLM completion failed: LLM client not initialized",
+    "category": "history",
+    "processing_time": 1171688959,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "What is the speed of light?",
+    "expected_answer": "299,792,458 meters per second",
+    "actual_answer": "Не удалось найти релевантную информацию по вашему запросу.",
+    "category": "science",
+    "processing_time": 240561875,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "Who painted the Mona Lisa?",
+    "expected_answer": "Leonardo da Vinci",
+    "actual_answer": "ERROR: LLM completion failed: LLM client not initialized",
+    "category": "art",
+    "processing_time": 990187125,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "What is the chemical symbol for gold?",
+    "expected_answer": "Au",
+    "actual_answer": "Не удалось найти релевантную информацию по вашему запросу.",
+    "category": "science",
+    "processing_time": 229976250,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "How many continents are there?",
+    "expected_answer": "7",
+    "actual_answer": "Не удалось найти релевантную информацию по вашему запросу.",
+    "category": "geography",
+    "processing_time": 234016542,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "What is the largest ocean?",
+    "expected_answer": "Pacific Ocean",
+    "actual_answer": "Не удалось найти релевантную информацию по вашему запросу.",
+    "category": "geography",
+    "processing_time": 224571542,
+    "success": false,
+    "mode": "simple"
+  },
+  {
+    "question": "Who invented the telephone?",
+    "expected_answer": "Alexander Graham Bell",
+    "actual_answer": "Не удалось найти релевантную информацию по вашему запросу.",
+    "category": "history",
+    "processing_time": 240666584,
+    "success": false,
+    "mode": "simple"
+  }
+]

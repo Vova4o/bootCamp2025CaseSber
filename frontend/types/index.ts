@@ -20,8 +20,8 @@ export interface ChatSession {
 export interface SearchRequest {
   query: string;
   mode: SearchMode;
-  session_id?: string; // For conversation context
-  previous_messages?: Message[]; // Context from previous turns
+  session_id?: string; 
+  previous_messages?: Message[]; 
 }
 
 export interface Source {

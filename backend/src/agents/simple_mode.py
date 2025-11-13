@@ -10,6 +10,9 @@ async def process_simple_mode(
     llm_client,
     max_results: int = 5
 ) -> Dict:
+    """
+    Simple Mode - быстрый поиск без учёта контекста диалога
+    """
     start_time = time.time()
     
     try:
@@ -26,16 +29,17 @@ async def process_simple_mode(
                 "query": query,
                 "answer": "Извините, не удалось найти информацию по вашему запросу.",
                 "sources": [],
-                "response_time": time.time() - start_time
+                "response_time": time.time() - start_time,
+                "context_used": False
             }
         
-        # 2. Формирование контекста
-        context = "\n\n".join([
+        # 2. Формирование контекста из поиска
+        search_context = "\n\n".join([
             f"[{i+1}] {r.get('title', 'Без названия')}\n{r.get('content', '')}\nURL: {r.get('url', '')}"
             for i, r in enumerate(search_results["results"])
         ])
         
-        # 3. Генерация ответа
+        # 3. Генерация ответа (БЕЗ контекста диалога)
         messages = [
             {
                 "role": "system",
@@ -43,7 +47,7 @@ async def process_simple_mode(
             },
             {
                 "role": "user",
-                "content": f"Вопрос: {query}\n\nНайденная информация:\n{context}\n\nДайте краткий и точный ответ."
+                "content": f"Вопрос: {query}\n\nНайденная информация:\n{search_context}\n\nДайте краткий и точный ответ."
             }
         ]
         
@@ -58,7 +62,8 @@ async def process_simple_mode(
             "query": query,
             "answer": answer,
             "sources": search_results["results"],
-            "response_time": time.time() - start_time
+            "response_time": time.time() - start_time,
+            "context_used": False
         }
         
     except Exception as e:
@@ -68,5 +73,6 @@ async def process_simple_mode(
             "query": query,
             "answer": f"Произошла ошибка: {str(e)}",
             "sources": [],
-            "response_time": time.time() - start_time
+            "response_time": time.time() - start_time,
+            "context_used": False
         }

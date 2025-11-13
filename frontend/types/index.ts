@@ -1,28 +1,4 @@
-export type SearchMode = "auto" | "simple" | "pro";
-
-export interface Message {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  timestamp: string;
-  sources?: Source[];
-  reasoning?: string;
-}
-
-export interface ChatSession {
-  id: string;
-  messages: Message[];
-  mode: SearchMode;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SearchRequest {
-  query: string;
-  mode: SearchMode;
-  session_id?: string; 
-  previous_messages?: Message[]; 
-}
+export type SearchMode = 'auto' | 'simple' | 'pro';
 
 export interface Source {
   title: string;
@@ -31,20 +7,37 @@ export interface Source {
   credibility?: number;
 }
 
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  sources?: Source[];
+  reasoning?: string;
+}
+
+export interface ChatSession {
+  id: string;
+  mode: SearchMode;
+  created_at: number;
+  updated_at: number;
+  messages: Message[];
+}
+
+export interface SearchRequest {
+  query: string;
+  mode: SearchMode;
+  session_id?: string;
+}
+
 export interface SearchResponse {
   query: string;
   mode: SearchMode;
   answer: string;
   sources: Source[];
   reasoning?: string;
-  processingTime?: number;
-  timestamp?: string;
-  session_id?: string; // Session tracking
-  context_used?: boolean; // Whether context was used
-}
-
-export interface StreamChunk {
-  type: "thinking" | "searching" | "analyzing" | "result";
-  content: string;
-  agent?: string;
+  processing_time: number;
+  timestamp: number;
+  session_id?: string;
+  context_used?: boolean;
 }

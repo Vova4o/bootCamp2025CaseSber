@@ -1,236 +1,273 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  Search,
-  Loader2,
-  Clock,
-  ExternalLink,
-  MessageSquare,
-  RotateCcw,
-} from "lucide-react";
 import { searchAPI } from "@/lib/api";
-import type { Message, SearchMode, Source } from "@/types";
+import type { ChatSession, SearchMode, Message } from "@/types";
+import ChatList from "./ChatList";
+import ChatMessage from "./ChatMessage";
+import CompactModeSelector from "./CompactModeSelector";
+import { Send, Loader2, Menu, X } from "lucide-react";
 
-interface ChatInterfaceProps {
-  mode: SearchMode;
-}
-
-export default function ChatInterface({ mode }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+export default function ChatInterface() {
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSession, setCurrentSession] = useState<ChatSession | null>(
+    null
+  );
+  const [mode, setMode] = useState<SearchMode>("auto");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // Load sessions from localStorage on mount
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    const savedSessions = localStorage.getItem("chat_sessions");
+    if (savedSessions) {
+      const parsed = JSON.parse(savedSessions);
+      setSessions(parsed);
+      if (parsed.length > 0) {
+        loadSession(parsed[0].id);
+      }
+    }
+  }, []);
 
-  // Create new session
-  const createNewSession = async () => {
+  // Save sessions to localStorage
+  useEffect(() => {
+    if (sessions.length > 0) {
+      localStorage.setItem("chat_sessions", JSON.stringify(sessions));
+    }
+  }, [sessions]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [currentSession?.messages]);
+
+  const loadSession = async (sessionId: string) => {
     try {
-      const session = await searchAPI.createSession(mode);
-      setSessionId(session.id);
-      setMessages([]);
+      const session = await searchAPI.getSession(sessionId);
+      setCurrentSession(session);
+      setMode(session.mode);
     } catch (error) {
-      console.error("Failed to create session:", error);
+      console.error("Failed to load session:", error);
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session) {
+        setCurrentSession(session);
+        setMode(session.mode);
+      }
     }
   };
 
-  // Initialize session on mount
-  useEffect(() => {
-    createNewSession();
-  }, [mode]);
+  const createNewChat = async () => {
+    try {
+      const newSession = await searchAPI.createSession(mode);
+      setSessions([newSession, ...sessions]);
+      setCurrentSession(newSession);
+    } catch (error) {
+      console.error("Failed to create session:", error);
+      const newSession: ChatSession = {
+        id: `local-${Date.now()}`,
+        mode,
+        created_at: Math.floor(Date.now() / 1000),
+        updated_at: Math.floor(Date.now() / 1000),
+        messages: [],
+      };
+      setSessions([newSession, ...sessions]);
+      setCurrentSession(newSession);
+    }
+  };
 
-  const handleSendMessage = async () => {
-    if (!query.trim() || !sessionId) return;
+  const deleteSession = async (sessionId: string) => {
+    try {
+      await searchAPI.deleteSession(sessionId);
+    } catch (error) {
+      console.error("Failed to delete session:", error);
+    }
+
+    const newSessions = sessions.filter((s) => s.id !== sessionId);
+    setSessions(newSessions);
+
+    if (currentSession?.id === sessionId) {
+      if (newSessions.length > 0) {
+        loadSession(newSessions[0].id);
+      } else {
+        setCurrentSession(null);
+      }
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!query.trim() || loading) return;
+
+    if (!currentSession) {
+      await createNewChat();
+      return;
+    }
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `msg-${Date.now()}`,
       role: "user",
-      content: query,
-      timestamp: new Date().toISOString(),
+      content: query.trim(),
+      timestamp: Math.floor(Date.now() / 1000),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const updatedSession = {
+      ...currentSession,
+      messages: [...currentSession.messages, userMessage],
+      updated_at: Math.floor(Date.now() / 1000),
+    };
+    setCurrentSession(updatedSession);
     setQuery("");
     setLoading(true);
 
     try {
-      const response = await searchAPI.sendMessage(sessionId, query, mode);
+      const response = await searchAPI.sendMessage(
+        currentSession.id,
+        userMessage.content,
+        mode
+      );
 
       const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `msg-${Date.now()}-assistant`,
         role: "assistant",
         content: response.answer,
-        timestamp: response.timestamp || new Date().toISOString(),
+        timestamp: Math.floor(Date.now() / 1000),
         sources: response.sources,
         reasoning: response.reasoning,
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error: any) {
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: `Ошибка: ${
-          error.response?.data?.detail || "Не удалось получить ответ"
-        }`,
-        timestamp: new Date().toISOString(),
+      const finalSession = {
+        ...updatedSession,
+        messages: [...updatedSession.messages, assistantMessage],
+        mode: response.mode as SearchMode,
+        updated_at: Math.floor(Date.now() / 1000),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+
+      setCurrentSession(finalSession);
+      setSessions(
+        sessions.map((s) => (s.id === finalSession.id ? finalSession : s))
+      );
+    } catch (error) {
+      console.error("Failed to send message:", error);
+      setCurrentSession(currentSession);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="bg-white rounded-3xl shadow-2xl flex flex-col h-[600px]">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <MessageSquare className="text-blue-600" size={24} />
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">
-              Chat Mode {mode === "pro" ? "🧠 Pro" : "⚡ Simple"}
-            </h2>
-            <p className="text-sm text-gray-500">
-              {messages.length} сообщений в этой сессии
-            </p>
+    <div className="flex h-screen bg-gray-950">
+      {/* Sidebar */}
+      <div
+        className={`${
+          sidebarOpen ? "w-80" : "w-0"
+        } transition-all duration-300 overflow-hidden`}
+      >
+        <ChatList
+          sessions={sessions}
+          currentSessionId={currentSession?.id}
+          onSelectSession={loadSession}
+          onDeleteSession={deleteSession}
+          onNewChat={createNewChat}
+        />
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="bg-gray-900/50 backdrop-blur-sm border-b border-gray-800 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-gray-200"
+              >
+                {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+              </button>
+              <h1 className="text-xl font-bold bg-linear-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                🔍 Research Pro
+              </h1>
+            </div>
           </div>
         </div>
-        <button
-          onClick={createNewSession}
-          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 font-medium flex items-center gap-2 transition-colors"
-        >
-          <RotateCcw size={16} />
-          Новая сессия
-        </button>
-      </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {messages.length === 0 && (
-          <div className="text-center text-gray-500 mt-12">
-            <MessageSquare className="mx-auto mb-4 text-gray-300" size={48} />
-            <p className="text-lg">Начните диалог с вашего вопроса</p>
-            <p className="text-sm mt-2">
-              {mode === "pro"
-                ? "Pro Mode будет учитывать контекст предыдущих сообщений"
-                : "Simple Mode для быстрых ответов"}
-            </p>
-          </div>
-        )}
-
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${
-              message.role === "user" ? "justify-end" : "justify-start"
-            }`}
-          >
-            <div
-              className={`max-w-[80%] rounded-2xl p-4 ${
-                message.role === "user"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 text-gray-900"
-              }`}
-            >
-              <p className="whitespace-pre-wrap leading-relaxed">
-                {message.content}
-              </p>
-
-              {/* Sources for assistant messages */}
-              {message.role === "assistant" &&
-                message.sources &&
-                message.sources.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                    <p className="text-xs font-semibold text-gray-600 mb-2">
-                      📚 Источники:
-                    </p>
-                    {message.sources.map((source, idx) => (
-                      <a
-                        key={idx}
-                        href={source.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block p-3 bg-white rounded-lg border border-gray-200 hover:border-blue-400 transition-colors text-sm"
-                      >
-                        <p className="font-medium text-gray-900 mb-1">
-                          {source.title}
-                        </p>
-                        <p className="text-xs text-gray-500 truncate">
-                          {source.url}
-                        </p>
-                      </a>
-                    ))}
-                  </div>
-                )}
-
-              {/* Reasoning for pro mode */}
-              {message.role === "assistant" && message.reasoning && (
-                <div className="mt-3 pt-3 border-t border-gray-300">
-                  <p className="text-xs font-semibold text-gray-600 mb-1">
-                    💡 Рассуждения:
-                  </p>
-                  <p className="text-xs text-gray-700">{message.reasoning}</p>
-                </div>
-              )}
-
-              <p className="text-xs opacity-60 mt-2">
-                {new Date(message.timestamp).toLocaleTimeString()}
-              </p>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {!currentSession ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <div className="text-6xl mb-4">🔍</div>
+                <h2 className="text-2xl font-bold text-gray-200 mb-2">
+                  Начните новый поиск
+                </h2>
+                <p className="text-gray-500">Создайте чат или задайте вопрос</p>
+              </div>
             </div>
-          </div>
-        ))}
-
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-2xl p-4 max-w-[80%]">
-              <Loader2 className="animate-spin text-blue-600" size={20} />
-              <p className="text-sm text-gray-600 mt-2">
-                {mode === "pro"
-                  ? "Анализирую с учётом контекста..."
-                  : "Ищу ответ..."}
-              </p>
+          ) : currentSession.messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <div className="text-6xl mb-4">💬</div>
+                <h2 className="text-2xl font-bold text-gray-200 mb-2">
+                  Чат создан
+                </h2>
+                <p className="text-gray-500">Задайте свой первый вопрос</p>
+              </div>
             </div>
-          </div>
-        )}
+          ) : (
+            currentSession.messages.map((message, idx) => (
+              <ChatMessage
+                key={message.id || idx}
+                message={message}
+                mode={
+                  message.role === "assistant" ? currentSession.mode : undefined
+                }
+              />
+            ))
+          )}
+          {loading && (
+            <div className="flex items-center gap-3 p-4 bg-gray-800/50 backdrop-blur-sm rounded-xl mr-12">
+              <div className="w-8 h-8 rounded-full bg-linear-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+                <Loader2 size={18} className="text-white animate-spin" />
+              </div>
+              <div className="text-gray-400">Обрабатываю запрос...</div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
 
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <div className="p-6 border-t border-gray-200">
-        <div className="flex gap-4">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyPress={(e) =>
-              e.key === "Enter" && !loading && handleSendMessage()
-            }
-            placeholder="Задайте следующий вопрос..."
-            disabled={loading}
-            className="flex-1 px-6 py-4 text-lg border-2 border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 disabled:bg-gray-50 disabled:cursor-not-allowed text-gray-900 placeholder-gray-400"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={loading || !query.trim()}
-            className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-lg"
-          >
-            {loading ? (
-              <Loader2 className="animate-spin" size={20} />
-            ) : (
-              <Search size={20} />
-            )}
-          </button>
+        {/* Input */}
+        <div className="border-t border-gray-800 bg-gray-900/50 backdrop-blur-sm p-4">
+          <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
+            <div className="flex gap-2">
+              <CompactModeSelector
+                mode={mode}
+                onModeChange={setMode}
+                disabled={loading}
+              />
+              <div className="flex-1 flex gap-2 bg-gray-800 rounded-xl p-1">
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Задайте вопрос..."
+                  disabled={loading}
+                  className="flex-1 px-3 bg-transparent border-none focus:outline-none disabled:cursor-not-allowed text-gray-100 placeholder-gray-500"
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !query.trim()}
+                  className="h-10 w-10 bg-linear-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center shrink-0"
+                >
+                  {loading ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Send size={18} />
+                  )}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       </div>
     </div>

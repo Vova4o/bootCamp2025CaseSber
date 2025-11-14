@@ -1,0 +1,3 @@
+[botdetection.ip_limit]
+# Filter IPs requesting more than 30 pages per minute
+link_token = true

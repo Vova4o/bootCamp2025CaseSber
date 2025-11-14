@@ -1,0 +1,58 @@
+use_default_settings: true
+
+general:
+  instance_name: "Research Search"
+  enable_metrics: false
+
+server:
+  secret_key: "your-secret-key-change-this"
+  limiter: false
+  image_proxy: true
+  method: "GET"
+  http_protocol_version: "1.1"
+
+outgoing:
+  request_timeout: 15.0
+  max_request_timeout: 20.0
+  useragent_suffix: ""
+  
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+engines:
+  - name: duckduckgo
+    disabled: true
+  - name: duckduckgo definitions
+    disabled: true
+  - name: duckduckgo images
+    disabled: true
+  - name: radio browser
+    disabled: true
+  - name: yacy images
+    disabled: true
+  
+  # Включенные надежные движки
+  - name: google
+    disabled: false
+    timeout: 12.0
+    
+  - name: bing
+    disabled: false
+    timeout: 12.0
+    
+  - name: brave
+    disabled: false
+    timeout: 12.0
+    
+  - name: qwant
+    disabled: false
+    timeout: 12.0
+    
+  - name: wikipedia
+    disabled: false
+    timeout: 10.0

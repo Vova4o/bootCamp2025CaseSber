@@ -1,0 +1,108 @@
+services:
+  # PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: research_postgres
+    environment:
+      POSTGRES_DB: research_db
+      POSTGRES_USER: research_user
+      POSTGRES_PASSWORD: research_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research_user -d research_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - research_network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: research_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - research_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # SearXNG (Primary search engine)
+  searxng:
+    image: searxng/searxng:latest
+    container_name: research_searxng
+    ports:
+      - "8080:8080"
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-your-secret-key-change-this}
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_DISABLE_LIMITER=true
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    networks:
+      - research_network
+    restart: unless-stopped
+
+  # Backend (Go)
+  backend:
+    build: ./backend-go
+    container_name: research_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - DEBUG=true
+      - DATABASE_URL=postgres://research_user:research_pass@postgres:5432/research_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - SEARXNG_URL=http://searxng:8080
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
+      - QWEN_API_URL=${QWEN_API_URL}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-turbo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - research_network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: research_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - research_network
+    restart: unless-stopped
+
+networks:
+  research_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

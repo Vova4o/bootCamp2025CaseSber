@@ -30,6 +30,27 @@ services:
     command: redis-server --appendonly yes
     networks:
       - research_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # SearXNG (Primary search engine)
+  searxng:
+    image: searxng/searxng:latest
+    container_name: research_searxng
+    ports:
+      - "8080:8080"
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-your-secret-key-change-this}
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_DISABLE_LIMITER=true
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    networks:
+      - research_network
+    restart: unless-stopped
 
   # Backend (Go)
   backend:
@@ -42,6 +63,8 @@ services:
       - DEBUG=true
       - DATABASE_URL=postgres://research_user:research_pass@postgres:5432/research_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
+      - SEARXNG_URL=http://searxng:8080
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - QWEN_API_URL=${QWEN_API_URL}
@@ -50,9 +73,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - research_network
+    restart: unless-stopped
 
   # Frontend
   frontend:

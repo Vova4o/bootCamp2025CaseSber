@@ -48,7 +48,7 @@ type FRAMESStats struct {
 	TotalTime         time.Duration
 }
 
-func mainFRAMES() {
+func main() {
 	mode := flag.String("mode", "pro", "Mode to test: pro")
 	dataFile := flag.String("data", "frames_dataset.json", "Path to FRAMES dataset JSON file")
 	limit := flag.Int("limit", 10, "Number of questions to test (0 = all)")

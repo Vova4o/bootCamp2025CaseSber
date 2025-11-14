@@ -36,27 +36,27 @@ export default function CompactModeSelector({
       color: 'purple',
       description: 'Глубокий анализ',
     },
-    {
-      value: 'pro-social' as SearchMode,
-      icon: Users,
-      label: 'Social',
-      color: 'pink',
-      description: 'Мнения из соцсетей',
-    },
-    {
-      value: 'pro-academic' as SearchMode,
-      icon: GraduationCap,
-      label: 'Academic',
-      color: 'indigo',
-      description: 'Научные статьи',
-    },
-    {
-      value: 'pro-finance' as SearchMode,
-      icon: DollarSign,
-      label: 'Finance',
-      color: 'emerald',
-      description: 'Финансовые данные',
-    },
+    // {
+    //   value: 'pro-social' as SearchMode,
+    //   icon: Users,
+    //   label: 'Social',
+    //   color: 'pink',
+    //   description: 'Мнения из соцсетей',
+    // },
+    // {
+    //   value: 'pro-academic' as SearchMode,
+    //   icon: GraduationCap,
+    //   label: 'Academic',
+    //   color: 'indigo',
+    //   description: 'Научные статьи',
+    // },
+    // {
+    //   value: 'pro-finance' as SearchMode,
+    //   icon: DollarSign,
+    //   label: 'Finance',
+    //   color: 'emerald',
+    //   description: 'Финансовые данные',
+    // },
   ];
 
   return (

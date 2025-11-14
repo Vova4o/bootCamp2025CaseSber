@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/config"
 	openai "github.com/sashabaranov/go-openai"
@@ -32,6 +34,24 @@ func NewLLMClient(cfg *config.Config) *LLMClient {
 	}
 }
 
+// supportsCustomParams checks if model supports custom temperature and max_tokens
+func (l *LLMClient) supportsCustomParams() bool {
+	model := strings.ToLower(l.cfg.OpenAIModel)
+	// o1 models and some newer GPT-4 variants don't support custom params
+	if strings.Contains(model, "o1") ||
+		strings.Contains(model, "o1-preview") ||
+		strings.Contains(model, "o1-mini") {
+		return false
+	}
+	return true
+}
+
+// isGPT4Model checks if model is GPT-4 or newer
+func (l *LLMClient) isGPT4Model() bool {
+	model := strings.ToLower(l.cfg.OpenAIModel)
+	return strings.Contains(model, "gpt-4") || strings.Contains(model, "o1")
+}
+
 func (l *LLMClient) Complete(ctx context.Context, prompt string, temperature float32, maxTokens int) (string, error) {
 	if l.client == nil {
 		return "", fmt.Errorf("LLM client not initialized")
@@ -45,13 +65,35 @@ func (l *LLMClient) Complete(ctx context.Context, prompt string, temperature flo
 				Content: prompt,
 			},
 		},
-		Temperature: temperature,
-		MaxTokens:   maxTokens,
 	}
+
+	// Only set custom parameters for models that support them
+	if l.supportsCustomParams() {
+		req.Temperature = temperature
+		if !l.isGPT4Model() {
+			req.MaxTokens = maxTokens
+		}
+	}
+	// For models that don't support custom params, use defaults (temperature=1, no max_tokens)
 
 	resp, err := l.client.CreateChatCompletion(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("chat completion failed: %w", err)
+		// Retry with default parameters if error is related to unsupported params
+		if strings.Contains(err.Error(), "temperature") ||
+			strings.Contains(err.Error(), "max_tokens") ||
+			strings.Contains(err.Error(), "max_completion_tokens") {
+			log.Printf("⚠️  Retrying with default parameters (temperature=1, no max_tokens)")
+			
+			req.Temperature = 1.0
+			req.MaxTokens = 0
+			
+			resp, err = l.client.CreateChatCompletion(ctx, req)
+			if err != nil {
+				return "", fmt.Errorf("chat completion failed: %w", err)
+			}
+		} else {
+			return "", fmt.Errorf("chat completion failed: %w", err)
+		}
 	}
 
 	if len(resp.Choices) == 0 {
@@ -93,15 +135,36 @@ func (l *LLMClient) ChatCompletion(
 	}
 
 	req := openai.ChatCompletionRequest{
-		Model:       l.cfg.OpenAIModel,
-		Messages:    chatMessages,
-		Temperature: temperature,
-		MaxTokens:   maxTokens,
+		Model:    l.cfg.OpenAIModel,
+		Messages: chatMessages,
+	}
+
+	// Only set custom parameters for models that support them
+	if l.supportsCustomParams() {
+		req.Temperature = temperature
+		if !l.isGPT4Model() {
+			req.MaxTokens = maxTokens
+		}
 	}
 
 	resp, err := l.client.CreateChatCompletion(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("chat completion failed: %w", err)
+		// Retry with default parameters if error is related to unsupported params
+		if strings.Contains(err.Error(), "temperature") ||
+			strings.Contains(err.Error(), "max_tokens") ||
+			strings.Contains(err.Error(), "max_completion_tokens") {
+			log.Printf("⚠️  Retrying with default parameters (temperature=1, no max_tokens)")
+			
+			req.Temperature = 1.0
+			req.MaxTokens = 0
+			
+			resp, err = l.client.CreateChatCompletion(ctx, req)
+			if err != nil {
+				return "", fmt.Errorf("chat completion failed: %w", err)
+			}
+		} else {
+			return "", fmt.Errorf("chat completion failed: %w", err)
+		}
 	}
 
 	if len(resp.Choices) == 0 {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/joho/godotenv"
 )
 
 // API request/response structures
@@ -43,8 +44,10 @@ type UserSession struct {
 var userSessions = make(map[int64]*UserSession)
 
 func main() {
-	// Load .env file if it exists (for local development)
-	loadEnvFile(".env")
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using system environment variables")
+	}
 
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	log.Printf("🔑 Bot token: %s", botToken) // Debug: show what token we got

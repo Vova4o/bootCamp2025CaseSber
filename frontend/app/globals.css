@@ -1,21 +1,67 @@
 @import "tailwindcss";
 
 @layer base {
+  * {
+    @apply border-neutral-800;
+  }
+
   body {
-    @apply antialiased bg-gray-950 text-gray-100;
+    @apply antialiased bg-neutral-950 text-neutral-100;
+  }
+
+  /* Улучшенная типографика */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply tracking-tight;
   }
 }
 
-/* Scrollbar styling */
+/* Кастомные scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-900;
+  @apply bg-transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-700 rounded-full hover:bg-gray-600;
+  @apply bg-neutral-800 rounded-full hover:bg-neutral-700;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme(colors.neutral.800) transparent;
+}
+
+/* Плавные анимации */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Улучшенный focus-visible */
+*:focus-visible {
+  @apply outline-none ring-2 ring-neutral-400 ring-offset-2 ring-offset-neutral-950;
+}
+
+/* Transitions */
+* {
+  @apply transition-colors duration-150;
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -22,10 +23,21 @@ type Config struct {
 	AnthropicKey string
 	QwenAPIURL   string
 	QwenModel    string
+
+	// CORS
+	CORSOrigins []string
 }
 
 func LoadConfig() *Config {
 	debug, _ := strconv.ParseBool(getEnv("DEBUG", "true"))
+
+	// Parse CORS origins
+	corsOrigins := getEnv("CORS_ORIGINS", "http://localhost:3000")
+	origins := strings.Split(corsOrigins, ",")
+	// Trim whitespace from each origin
+	for i, origin := range origins {
+		origins[i] = strings.TrimSpace(origin)
+	}
 
 	return &Config{
 		Port:  getEnv("PORT", "8000"),
@@ -39,6 +51,8 @@ func LoadConfig() *Config {
 		AnthropicKey: getEnv("ANTHROPIC_API_KEY", ""),
 		QwenAPIURL:   getEnv("QWEN_API_URL", ""),
 		QwenModel:    getEnv("QWEN_MODEL", "qwen-turbo"),
+
+		CORSOrigins: origins,
 	}
 }
 

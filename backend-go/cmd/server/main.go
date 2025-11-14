@@ -49,14 +49,17 @@ func main() {
 
 	// CORS configuration
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowOrigins:     cfg.CORSOrigins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}
 	router.Use(cors.New(corsConfig))
+
+	// Log CORS origins for debugging
+	log.Printf("🌐 CORS enabled for origins: %v", cfg.CORSOrigins)
 
 	// Setup routes
 	api.SetupRoutes(router, db, cfg)

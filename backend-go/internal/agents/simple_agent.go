@@ -8,6 +8,7 @@ import (
 
 	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/models"
 	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/tools"
+	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/utils"
 )
 
 type SimpleAgent struct {
@@ -84,8 +85,9 @@ func (a *SimpleAgent) ProcessWithContext(
 	var sourcesContext strings.Builder
 	sourcesContext.WriteString("Найденная информация:\n\n")
 	for i, result := range searchResults.Results {
+		content := utils.SanitizeUTF8(result.Content)
 		sourcesContext.WriteString(fmt.Sprintf("Источник %d (%s):\n%s\n\n",
-			i+1, result.Title, result.Content))
+			i+1, result.Title, content))
 	}
 
 	// Step 4: Build LLM prompt
@@ -114,15 +116,16 @@ func (a *SimpleAgent) ProcessWithContext(
 		return nil, fmt.Errorf("LLM completion failed: %w", err)
 	}
 
-	// Step 6: Format sources
+	// Step 6: Format sources with UTF-8 safety
 	sources := make([]models.Source, 0, len(searchResults.Results))
 	for _, result := range searchResults.Results {
-		snippet := result.Snippet
+		snippet := utils.SanitizeUTF8(result.Snippet)
 		if len(snippet) > 200 {
-			snippet = snippet[:200] + "..."
+			snippet = utils.TruncateUTF8WithEllipsis(snippet, 200)
 		}
+		
 		sources = append(sources, models.Source{
-			Title:       result.Title,
+			Title:       utils.SanitizeUTF8(result.Title),
 			URL:         result.URL,
 			Snippet:     snippet,
 			Credibility: result.Score,

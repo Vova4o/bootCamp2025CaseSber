@@ -11,6 +11,7 @@ import (
 
 	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/models"
 	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/tools"
+	"github.com/Vova4o/bootCamp2025CaseSber/backend/internal/utils"
 )
 
 type ProAgent struct {
@@ -276,8 +277,11 @@ Rephrase the current question to be self-contained and include important informa
 		if result.RawContent != "" {
 			content = result.RawContent
 		}
+		
+		// Sanitize and truncate safely
+		content = utils.SanitizeUTF8(content)
 		if len(content) > 800 {
-			content = content[:800] + "..."
+			content = utils.TruncateUTF8WithEllipsis(content, 800)
 		}
 
 		if queryLang == "ru" {
@@ -357,18 +361,20 @@ Your task:
 		return nil, fmt.Errorf("LLM completion failed: %w", err)
 	}
 
-	// Step 10: Format sources
+	// Step 10: Format sources with UTF-8 safety
 	sources := make([]models.Source, 0)
 	for i, result := range displaySources {
 		if i >= 8 {
 			break
 		}
-		snippet := result.Snippet
+		
+		snippet := utils.SanitizeUTF8(result.Snippet)
 		if len(snippet) > 200 {
-			snippet = snippet[:200] + "..."
+			snippet = utils.TruncateUTF8WithEllipsis(snippet, 200)
 		}
+		
 		sources = append(sources, models.Source{
-			Title:       result.Title,
+			Title:       utils.SanitizeUTF8(result.Title),
 			URL:         result.URL,
 			Snippet:     snippet,
 			Credibility: result.Credibility,
@@ -462,7 +468,7 @@ func (a *ProAgent) parallelSubQuerySearch(
 		allResults = append(allResults, sr.results...)
 	}
 
-	// 🆕 FALLBACK: If most sub-queries failed or not enough results
+	// FALLBACK: If most sub-queries failed or not enough results
 	if failCount >= len(subQueries)/2 || len(allResults) < 3 {
 		log.Printf("⚠️ Multi-hop fallback: %d/%d sub-queries failed, switching to direct search",
 			failCount, len(subQueries))
@@ -485,10 +491,7 @@ func (a *ProAgent) parallelSubQuerySearch(
 
 // Helper function to truncate long queries
 func truncateQuery(query string, maxLen int) string {
-	if len(query) <= maxLen {
-		return query
-	}
-	return query[:maxLen] + "..."
+	return utils.TruncateUTF8(query, maxLen)
 }
 
 // selectDiverseSources ensures domain diversity in results

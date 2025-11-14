@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -36,6 +37,29 @@ type Source struct {
 	URL         string  `json:"url"`
 	Snippet     string  `json:"snippet"`
 	Credibility float64 `json:"credibility,omitempty"`
+}
+
+// BeforeSave hook to sanitize UTF-8 before saving to database
+func (s *Source) BeforeSave(tx *gorm.DB) error {
+	s.Title = sanitizeUTF8(s.Title)
+	s.URL = sanitizeUTF8(s.URL)
+	s.Snippet = sanitizeUTF8(s.Snippet)
+	return nil
+}
+
+// BeforeSave hook for Message
+func (m *Message) BeforeSave(tx *gorm.DB) error {
+	m.Content = sanitizeUTF8(m.Content)
+	m.Reasoning = sanitizeUTF8(m.Reasoning)
+	return nil
+}
+
+// sanitizeUTF8 removes invalid UTF-8 sequences
+func sanitizeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, "")
 }
 
 func InitDB(databaseURL string) (*gorm.DB, error) {

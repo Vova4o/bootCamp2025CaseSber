@@ -73,7 +73,7 @@ export default function ChatMessage({ message, mode }: ChatMessageProps) {
           )}
         </div>
 
-        <div className="text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
+        <div className="text-gray-200 whitespace-pre-wrap wrap-break-words leading-relaxed">
           {message.content}
         </div>
 

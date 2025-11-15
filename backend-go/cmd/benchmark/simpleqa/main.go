@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,7 +14,7 @@ import (
 )
 
 // ============================================================================
-// ДОБАВЛЕНО: Типы для API запросов/ответов
+// API Types
 // ============================================================================
 
 type SearchRequest struct {
@@ -34,362 +35,727 @@ type Source struct {
 }
 
 // ============================================================================
-// Dataset и результаты
+// SimpleQA Dataset Types (Hugging Face format)
 // ============================================================================
 
-type SimpleQAQuestion struct {
-	Question       string   `json:"question"`
-	Answer         string   `json:"answer"`
-	Category       string   `json:"category"`
-	AcceptableVars []string `json:"acceptable_variations"` // ДОБАВЛЕНО: варианты ответа
+type SimpleQAMetadata struct {
+	Topic      string   `json:"topic"`
+	AnswerType string   `json:"answer_type"`
+	URLs       []string `json:"urls"`
 }
+
+// Raw row from HF API - metadata is a JSON string
+type SimpleQARowRaw struct {
+	MetadataStr string `json:"metadata"` // Comes as JSON string
+	Problem     string `json:"problem"`
+	Answer      string `json:"answer"`
+}
+
+type HuggingFaceResponse struct {
+	Rows []struct {
+		Row SimpleQARowRaw `json:"row"`
+	} `json:"rows"`
+	NumRowsTotal int `json:"num_rows_total"`
+}
+
+// Unified question format
+type BenchmarkQuestion struct {
+	ID         string
+	Question   string
+	Answer     string
+	Category   string
+	AnswerType string
+	URLs       []string
+	Dataset    string
+}
+
+// ============================================================================
+// Result Types
+// ============================================================================
 
 type BenchmarkResult struct {
-	Question       string        `json:"question"`
-	ExpectedAnswer string        `json:"expected_answer"`
-	ActualAnswer   string        `json:"actual_answer"`
-	Category       string        `json:"category"`
-	ProcessingTime time.Duration `json:"processing_time"`
-	Correct        bool          `json:"correct"`        // ИЗМЕНЕНО: вместо Success
-	HasSources     bool          `json:"has_sources"`    // ДОБАВЛЕНО
-	SourceCount    int           `json:"source_count"`   // ДОБАВЛЕНО
-	Mode           string        `json:"mode"`
+	ID                string        `json:"id"`
+	Question          string        `json:"question"`
+	ExpectedAnswer    string        `json:"expected_answer"`
+	ActualAnswer      string        `json:"actual_answer"`
+	Category          string        `json:"category"`
+	AnswerType        string        `json:"answer_type"`
+	Dataset           string        `json:"dataset"`
+	Mode              string        `json:"mode"`
+	ProcessingTime    time.Duration `json:"processing_time"`
+	Correct           bool          `json:"correct"`
+	PartiallyCorrect  bool          `json:"partially_correct"`
+	HasSources        bool          `json:"has_sources"`
+	SourceCount       int           `json:"source_count"`
+	SourceQuality     float64       `json:"source_quality"`
+	FactualityScore   float64       `json:"factuality_score"`
+	Error             string        `json:"error,omitempty"`
 }
 
-// ДОБАВЛЕНО: Статистика по категориям
 type CategoryStats struct {
-	Total    int
-	Correct  int
-	Accuracy float64
+	Total            int
+	Correct          int
+	PartiallyCorrect int
+	Accuracy         float64
+	PartialAccuracy  float64
+	AvgTime          float64
+	AvgSources       float64
 }
 
 type Stats struct {
-	TotalQuestions int
-	CorrectCount   int              // ИЗМЕНЕНО: вместо SuccessCount
-	FailCount      int
-	Accuracy       float64          // ДОБАВЛЕНО: вместо SuccessRate
-	AvgTime        float64
-	TotalTime      time.Duration
-	ByCategory     map[string]CategoryStats // ДОБАВЛЕНО
+	TotalQuestions     int
+	CorrectCount       int
+	PartialCount       int
+	FailCount          int
+	Accuracy           float64
+	PartialAccuracy    float64
+	AvgTime            float64
+	AvgSourceCount     float64
+	AvgFactualityScore float64
+	TotalTime          time.Duration
+	ByCategory         map[string]CategoryStats
+	ByAnswerType       map[string]CategoryStats
 }
+
+// ============================================================================
+// Main
+// ============================================================================
 
 func main() {
-	mode := flag.String("mode", "simple", "Mode to test: simple or pro")
-	dataFile := flag.String("data", "simpleqa_dataset.json", "Path to SimpleQA dataset JSON file")
-	limit := flag.Int("limit", 10, "Number of questions to test (0 = all)")
-	output := flag.String("output", "benchmark_results.json", "Output file for results")
+	mode := flag.String("mode", "simple", "Mode: simple or pro")
+	limit := flag.Int("limit", 100, "Number of questions (0 = all)")
+	offset := flag.Int("offset", 0, "Starting offset in dataset")
+	output := flag.String("output", "", "Output file (auto-generated if empty)")
 	apiURL := flag.String("api", "http://localhost:8000", "Backend API URL")
+	hfToken := flag.String("hf-token", "", "Hugging Face API token (optional)")
+	useLocal := flag.Bool("local", false, "Use local dataset file")
+	localFile := flag.String("file", "simpleqa_dataset.json", "Local dataset file")
 	flag.Parse()
 
-	log.Printf("🧪 SimpleQA Benchmark - Mode: %s, API: %s", *mode, *apiURL)
+	log.Printf("🧪 SimpleQA Benchmark - Research Assistant")
+	log.Printf("   Mode: %s | API: %s", *mode, *apiURL)
 
-	questions, err := loadDataset(*dataFile)
-	if err != nil {
-		log.Fatalf("Failed to load dataset: %v", err)
-	}
+	// Load questions
+	var questions []BenchmarkQuestion
+	var err error
 
-	log.Printf("Loaded %d questions from dataset", len(questions))
-
-	if *limit > 0 && *limit < len(questions) {
-		questions = questions[:*limit]
-	}
-
-	results := make([]BenchmarkResult, 0, len(questions))
-	startTime := time.Now()
-
-	for i, q := range questions {
-		log.Printf("\n[%d/%d] ❓ %s", i+1, len(questions), q.Question)
-		log.Printf("  📌 Expected: %s", q.Answer)
-
-		result := runQuestion(*apiURL, q, *mode)
-		results = append(results, result)
-
-		status := "✅"
-		if !result.Correct {
-			status = "❌"
-		}
-
-		actualAnswer := result.ActualAnswer
-		if len(actualAnswer) > 150 {
-			actualAnswer = actualAnswer[:150] + "..."
-		}
-		log.Printf("  💬 Got: %s", actualAnswer)
-		log.Printf("  %s %s (%.2fs, %d sources)", 
-			status, 
-			map[bool]string{true: "CORRECT", false: "INCORRECT"}[result.Correct],
-			result.ProcessingTime.Seconds(),
-			result.SourceCount)
-	}
-
-	totalTime := time.Since(startTime)
-	stats := calculateStats(results, totalTime)
-	printSummary(stats, *mode)
-
-	if err := saveResults(results, *output); err != nil {
-		log.Printf("Warning: Failed to save results: %v", err)
+	if *useLocal {
+		questions, err = loadLocalDataset(*localFile)
 	} else {
-		log.Printf("Results saved to %s", *output)
+		questions, err = loadSimpleQAFromHF(*hfToken, *offset, *limit)
+	}
+
+	if err != nil {
+		log.Fatalf("❌ Failed to load dataset: %v", err)
+	}
+
+	log.Printf("✅ Loaded %d questions from SimpleQA dataset", len(questions))
+
+	// Run benchmark
+	startTime := time.Now()
+	results := runBenchmark(*apiURL, questions, *mode)
+	totalTime := time.Since(startTime)
+
+	// Calculate statistics
+	stats := calculateStats(results, totalTime)
+
+	// Print summary
+	printDetailedSummary(stats, *mode)
+
+	// Save results
+	if *output == "" {
+		*output = fmt.Sprintf("simpleqa_benchmark_%s_%s.json",
+			*mode, time.Now().Format("20060102_150405"))
+	}
+	if err := saveResults(results, stats, *output); err != nil {
+		log.Printf("⚠️  Warning: Failed to save results: %v", err)
+	} else {
+		log.Printf("💾 Results saved to %s", *output)
 	}
 }
 
-func loadDataset(filename string) ([]SimpleQAQuestion, error) {
+// ============================================================================
+// Dataset Loading from Hugging Face
+// ============================================================================
+
+func loadSimpleQAFromHF(token string, offset, limit int) ([]BenchmarkQuestion, error) {
+	if limit == 0 {
+		limit = 4326 // Total rows in dataset
+	}
+
+	// Hugging Face datasets API endpoint
+	url := fmt.Sprintf(
+		"https://datasets-server.huggingface.co/rows?dataset=basicv8vc/SimpleQA&config=default&split=test&offset=%d&length=%d",
+		offset, limit,
+	)
+
+	log.Printf("📡 Fetching from Hugging Face: offset=%d, limit=%d", offset, limit)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HF API error %d: %s", resp.StatusCode, body)
+	}
+
+	var hfResponse HuggingFaceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&hfResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	log.Printf("📊 Total rows in dataset: %d", hfResponse.NumRowsTotal)
+
+	questions := make([]BenchmarkQuestion, 0, len(hfResponse.Rows))
+	for i, row := range hfResponse.Rows {
+		// Parse metadata JSON string
+		metadata, err := parseMetadata(row.Row.MetadataStr)
+		if err != nil {
+			log.Printf("⚠️  Warning: Failed to parse metadata for row %d: %v", i, err)
+			continue
+		}
+
+		questions = append(questions, BenchmarkQuestion{
+			ID:         fmt.Sprintf("simpleqa_%d", offset+i+1),
+			Question:   row.Row.Problem,
+			Answer:     row.Row.Answer,
+			Category:   metadata.Topic,
+			AnswerType: metadata.AnswerType,
+			URLs:       metadata.URLs,
+			Dataset:    "simpleqa",
+		})
+	}
+
+	return questions, nil
+}
+
+// Parse metadata from JSON string (or Python dict string)
+func parseMetadata(metadataStr string) (SimpleQAMetadata, error) {
+	var metadata SimpleQAMetadata
+
+	// Replace Python-style single quotes with double quotes
+	metadataStr = strings.ReplaceAll(metadataStr, "'", "\"")
+
+	if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {
+		return metadata, fmt.Errorf("failed to parse metadata: %w", err)
+	}
+
+	return metadata, nil
+}
+
+func loadLocalDataset(filename string) ([]BenchmarkQuestion, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("Dataset not found, creating sample dataset...")
+			log.Printf("⚠️  Dataset file not found, creating sample...")
 			return createSampleDataset(), nil
 		}
 		return nil, err
 	}
 
-	var questions []SimpleQAQuestion
-	if err := json.Unmarshal(data, &questions); err != nil {
-		return nil, err
+	var rows []struct {
+		Metadata interface{} `json:"metadata"`
+		Problem  string      `json:"problem"`
+		Answer   string      `json:"answer"`
 	}
+
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	questions := make([]BenchmarkQuestion, 0, len(rows))
+	for i, row := range rows {
+		var metadata SimpleQAMetadata
+
+		// Handle metadata as either string or object
+		switch v := row.Metadata.(type) {
+		case string:
+			if parsed, err := parseMetadata(v); err == nil {
+				metadata = parsed
+			}
+		case map[string]interface{}:
+			// Convert to JSON and back
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				json.Unmarshal(jsonBytes, &metadata)
+			}
+		}
+
+		questions = append(questions, BenchmarkQuestion{
+			ID:         fmt.Sprintf("simpleqa_%d", i+1),
+			Question:   row.Problem,
+			Answer:     row.Answer,
+			Category:   metadata.Topic,
+			AnswerType: metadata.AnswerType,
+			URLs:       metadata.URLs,
+			Dataset:    "simpleqa",
+		})
+	}
+
 	return questions, nil
 }
 
-// УЛУЧШЕНО: Добавлены acceptable_variations для каждого вопроса
-func createSampleDataset() []SimpleQAQuestion {
-	return []SimpleQAQuestion{
+func createSampleDataset() []BenchmarkQuestion {
+	return []BenchmarkQuestion{
 		{
-			Question: "What is the capital of France?",
-			Answer:   "Paris",
-			Category: "geography",
-			AcceptableVars: []string{"paris", "Paris"},
+			ID:         "sample_1",
+			Question:   "What is the capital of France?",
+			Answer:     "Paris",
+			Category:   "Geography",
+			AnswerType: "Place",
+			Dataset:    "simpleqa",
 		},
 		{
-			Question: "Who wrote Romeo and Juliet?",
-			Answer:   "William Shakespeare",
-			Category: "literature",
-			AcceptableVars: []string{"shakespeare", "William Shakespeare", "Shakespeare"},
-		},
-		{
-			Question: "What is the largest planet in our solar system?",
-			Answer:   "Jupiter",
-			Category: "astronomy",
-			AcceptableVars: []string{"jupiter", "Jupiter"},
-		},
-		{
-			Question: "In what year did World War II end?",
-			Answer:   "1945",
-			Category: "history",
-			AcceptableVars: []string{"1945"},
-		},
-		{
-			Question: "What is the speed of light?",
-			Answer:   "299,792,458 m/s",
-			Category: "physics",
-			AcceptableVars: []string{"299792458", "300000000", "3*10^8", "299,792,458", "approximately 300,000"},
-		},
-		{
-			Question: "Who painted the Mona Lisa?",
-			Answer:   "Leonardo da Vinci",
-			Category: "art",
-			AcceptableVars: []string{"da vinci", "leonardo", "Leonardo da Vinci"},
-		},
-		{
-			Question: "What is the chemical symbol for gold?",
-			Answer:   "Au",
-			Category: "chemistry",
-			AcceptableVars: []string{"au", "Au", "AU"},
-		},
-		{
-			Question: "How many continents are there?",
-			Answer:   "7",
-			Category: "geography",
-			AcceptableVars: []string{"7", "seven", "Seven"},
-		},
-		{
-			Question: "What is the largest ocean?",
-			Answer:   "Pacific Ocean",
-			Category: "geography",
-			AcceptableVars: []string{"pacific", "Pacific", "Pacific Ocean"},
-		},
-		{
-			Question: "Who invented the telephone?",
-			Answer:   "Alexander Graham Bell",
-			Category: "history",
-			AcceptableVars: []string{"bell", "graham bell", "Alexander Graham Bell", "Alexander Bell"},
+			ID:         "sample_2",
+			Question:   "Who wrote Romeo and Juliet?",
+			Answer:     "William Shakespeare",
+			Category:   "Art",
+			AnswerType: "Person",
+			Dataset:    "simpleqa",
 		},
 	}
 }
 
-func runQuestion(apiURL string, q SimpleQAQuestion, mode string) BenchmarkResult {
+// ============================================================================
+// Benchmark Execution
+// ============================================================================
+
+func runBenchmark(apiURL string, questions []BenchmarkQuestion, mode string) []BenchmarkResult {
+	results := make([]BenchmarkResult, 0, len(questions))
+
+	for i, q := range questions {
+		log.Printf("\n[%d/%d] ❓ %s", i+1, len(questions), truncate(q.Question, 100))
+		log.Printf("  📌 Expected: %s", truncate(q.Answer, 80))
+		log.Printf("  🏷️  Category: %s | Type: %s", q.Category, q.AnswerType)
+
+		result := runQuestion(apiURL, q, mode)
+		results = append(results, result)
+
+		status := "✅"
+		if result.PartiallyCorrect {
+			status = "🟡"
+		} else if !result.Correct {
+			status = "❌"
+		}
+
+		log.Printf("  💬 Got: %s", truncate(result.ActualAnswer, 80))
+		log.Printf("  %s %s | ⏱️  %.2fs | 📚 %d sources | ✓ %.2f",
+			status,
+			formatResult(result),
+			result.ProcessingTime.Seconds(),
+			result.SourceCount,
+			result.FactualityScore)
+	}
+
+	return results
+}
+
+func runQuestion(apiURL string, q BenchmarkQuestion, mode string) BenchmarkResult {
 	start := time.Now()
 
 	reqBody := SearchRequest{
 		Query: q.Question,
 		Mode:  mode,
 	}
+
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return BenchmarkResult{
-			Question:       q.Question,
-			ExpectedAnswer: q.Answer,
-			ActualAnswer:   fmt.Sprintf("ERROR marshaling request: %v", err),
-			Category:       q.Category,
-			ProcessingTime: time.Since(start),
-			Correct:        false,
-			Mode:           mode,
-		}
+		return createErrorResult(q, mode, err, time.Since(start))
 	}
 
-	resp, err := http.Post(apiURL+"/api/search", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(apiURL+"/api/search", "application/json",
+		bytes.NewBuffer(jsonData))
 	if err != nil {
-		return BenchmarkResult{
-			Question:       q.Question,
-			ExpectedAnswer: q.Answer,
-			ActualAnswer:   fmt.Sprintf("ERROR calling API: %v", err),
-			Category:       q.Category,
-			ProcessingTime: time.Since(start),
-			Correct:        false,
-			Mode:           mode,
-		}
+		return createErrorResult(q, mode, err, time.Since(start))
 	}
 	defer resp.Body.Close()
 
 	processingTime := time.Since(start)
 
 	if resp.StatusCode != http.StatusOK {
-		return BenchmarkResult{
-			Question:       q.Question,
-			ExpectedAnswer: q.Answer,
-			ActualAnswer:   fmt.Sprintf("ERROR: HTTP %d", resp.StatusCode),
-			Category:       q.Category,
-			ProcessingTime: processingTime,
-			Correct:        false,
-			Mode:           mode,
-		}
+		body, _ := io.ReadAll(resp.Body)
+		return createErrorResult(q, mode,
+			fmt.Errorf("HTTP %d: %s", resp.StatusCode, body), processingTime)
 	}
 
-	var result SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return BenchmarkResult{
-			Question:       q.Question,
-			ExpectedAnswer: q.Answer,
-			ActualAnswer:   fmt.Sprintf("ERROR parsing response: %v", err),
-			Category:       q.Category,
-			ProcessingTime: processingTime,
-			Correct:        false,
-			Mode:           mode,
-		}
+	var searchResp SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return createErrorResult(q, mode, err, processingTime)
 	}
 
-	// ДОБАВЛЕНО: Проверка корректности ответа
-	correct := checkAnswer(result.Answer, q.Answer, q.AcceptableVars)
+	// Evaluate result
+	correct, partial := evaluateAnswer(searchResp.Answer, q.Answer)
+	sourceQuality := evaluateSourceQuality(searchResp.Sources, q.URLs)
+	factualityScore := evaluateFactuality(searchResp.Answer, q.Answer)
 
 	return BenchmarkResult{
-		Question:       q.Question,
-		ExpectedAnswer: q.Answer,
-		ActualAnswer:   result.Answer,
-		Category:       q.Category,
-		ProcessingTime: processingTime,
-		Correct:        correct,              // ИЗМЕНЕНО
-		HasSources:     len(result.Sources) > 0,
-		SourceCount:    len(result.Sources),
-		Mode:           mode,
+		ID:               q.ID,
+		Question:         q.Question,
+		ExpectedAnswer:   q.Answer,
+		ActualAnswer:     searchResp.Answer,
+		Category:         q.Category,
+		AnswerType:       q.AnswerType,
+		Dataset:          q.Dataset,
+		Mode:             mode,
+		ProcessingTime:   processingTime,
+		Correct:          correct,
+		PartiallyCorrect: partial,
+		HasSources:       len(searchResp.Sources) > 0,
+		SourceCount:      len(searchResp.Sources),
+		SourceQuality:    sourceQuality,
+		FactualityScore:  factualityScore,
 	}
 }
 
-// ДОБАВЛЕНО: Функция проверки правильности ответа
-func checkAnswer(actual, expected string, acceptable []string) bool {
+func createErrorResult(q BenchmarkQuestion, mode string, err error, duration time.Duration) BenchmarkResult {
+	return BenchmarkResult{
+		ID:             q.ID,
+		Question:       q.Question,
+		ExpectedAnswer: q.Answer,
+		ActualAnswer:   "",
+		Category:       q.Category,
+		AnswerType:     q.AnswerType,
+		Dataset:        q.Dataset,
+		Mode:           mode,
+		ProcessingTime: duration,
+		Correct:        false,
+		Error:          err.Error(),
+	}
+}
+
+// ============================================================================
+// Evaluation Functions
+// ============================================================================
+
+func evaluateAnswer(actual, expected string) (correct, partial bool) {
 	if actual == "" {
-		return false
+		return false, false
 	}
 
 	actualLower := strings.ToLower(strings.TrimSpace(actual))
-	
-	// Проверяем точное совпадение с ожидаемым ответом
-	if strings.Contains(actualLower, strings.ToLower(expected)) {
-		return true
+	expectedLower := strings.ToLower(strings.TrimSpace(expected))
+
+	// Exact substring match
+	if strings.Contains(actualLower, expectedLower) {
+		return true, false
 	}
 
-	// Проверяем варианты
-	for _, variant := range acceptable {
-		if strings.Contains(actualLower, strings.ToLower(variant)) {
-			return true
+	// Check if expected is contained in actual
+	if strings.Contains(expectedLower, actualLower) {
+		return true, false
+	}
+
+	// Extract key terms (words longer than 3 chars)
+	expectedWords := extractKeyWords(expectedLower)
+	actualWords := extractKeyWords(actualLower)
+
+	// Count matches
+	matchCount := 0
+	for _, expWord := range expectedWords {
+		for _, actWord := range actualWords {
+			if expWord == actWord {
+				matchCount++
+				break
+			}
 		}
 	}
 
-	return false
+	// Partial match if >50% of key words match
+	if len(expectedWords) > 0 {
+		matchRatio := float64(matchCount) / float64(len(expectedWords))
+		if matchRatio >= 0.8 {
+			return true, false
+		}
+		if matchRatio >= 0.5 {
+			return false, true
+		}
+	}
+
+	return false, false
 }
 
-// УЛУЧШЕНО: Добавлена статистика по категориям
+func extractKeyWords(text string) []string {
+	words := strings.Fields(text)
+	keyWords := make([]string, 0)
+
+	stopWords := map[string]bool{
+		"the": true, "is": true, "at": true, "which": true, "on": true,
+		"and": true, "or": true, "but": true, "in": true, "with": true,
+		"was": true, "were": true, "been": true, "being": true, "a": true,
+		"an": true, "of": true, "to": true, "for": true, "as": true,
+	}
+
+	for _, word := range words {
+		cleaned := strings.Trim(word, ".,!?;:\"'()[]{}«»")
+		if len(cleaned) > 3 && !stopWords[cleaned] {
+			keyWords = append(keyWords, cleaned)
+		}
+	}
+
+	return keyWords
+}
+
+func evaluateSourceQuality(sources []Source, expectedURLs []string) float64 {
+	if len(sources) == 0 {
+		return 0.0
+	}
+
+	score := 0.0
+
+	// Base score for having sources
+	score += 0.4
+
+	// Diversity score (unique domains)
+	domains := make(map[string]bool)
+	for _, s := range sources {
+		domain := extractDomain(s.URL)
+		domains[domain] = true
+	}
+	diversityScore := float64(len(domains)) / float64(len(sources))
+	score += diversityScore * 0.3
+
+	// Expected URL matching (if provided)
+	if len(expectedURLs) > 0 {
+		matches := 0
+		for _, expectedURL := range expectedURLs {
+			expectedDomain := extractDomain(expectedURL)
+			for _, actual := range sources {
+				actualDomain := extractDomain(actual.URL)
+				if strings.Contains(actualDomain, expectedDomain) ||
+					strings.Contains(expectedDomain, actualDomain) {
+					matches++
+					break
+				}
+			}
+		}
+		score += (float64(matches) / float64(len(expectedURLs))) * 0.3
+	} else {
+		score += 0.3
+	}
+
+	return score
+}
+
+func extractDomain(url string) string {
+	// Remove protocol
+	url = strings.TrimPrefix(url, "http://")
+	url = strings.TrimPrefix(url, "https://")
+
+	// Extract domain
+	parts := strings.Split(url, "/")
+	if len(parts) > 0 {
+		// Remove www. if present
+		domain := strings.TrimPrefix(parts[0], "www.")
+		return domain
+	}
+	return url
+}
+
+func evaluateFactuality(actual, expected string) float64 {
+	if actual == "" {
+		return 0.0
+	}
+
+	actualWords := extractKeyWords(strings.ToLower(actual))
+	expectedWords := extractKeyWords(strings.ToLower(expected))
+
+	if len(expectedWords) == 0 {
+		return 0.0
+	}
+
+	matches := 0
+	for _, expWord := range expectedWords {
+		for _, actWord := range actualWords {
+			if expWord == actWord {
+				matches++
+				break
+			}
+		}
+	}
+
+	return float64(matches) / float64(len(expectedWords))
+}
+
+// ============================================================================
+// Statistics
+// ============================================================================
+
 func calculateStats(results []BenchmarkResult, totalTime time.Duration) Stats {
 	stats := Stats{
 		TotalQuestions: len(results),
 		TotalTime:      totalTime,
 		ByCategory:     make(map[string]CategoryStats),
+		ByAnswerType:   make(map[string]CategoryStats),
 	}
 
 	var totalProcessingTime time.Duration
+	var totalSources, totalFactuality float64
+
 	for _, r := range results {
 		if r.Correct {
 			stats.CorrectCount++
+		} else if r.PartiallyCorrect {
+			stats.PartialCount++
 		} else {
 			stats.FailCount++
 		}
-		totalProcessingTime += r.ProcessingTime
 
-		// Статистика по категориям
-		catStats := stats.ByCategory[r.Category]
-		catStats.Total++
-		if r.Correct {
-			catStats.Correct++
-		}
-		stats.ByCategory[r.Category] = catStats
+		totalProcessingTime += r.ProcessingTime
+		totalSources += float64(r.SourceCount)
+		totalFactuality += r.FactualityScore
+
+		// By category
+		updateCategoryStats(stats.ByCategory, r.Category, r)
+		// By answer type
+		updateCategoryStats(stats.ByAnswerType, r.AnswerType, r)
 	}
 
 	if stats.TotalQuestions > 0 {
-		stats.Accuracy = float64(stats.CorrectCount) / float64(stats.TotalQuestions) * 100
-		stats.AvgTime = totalProcessingTime.Seconds() / float64(stats.TotalQuestions)
+		stats.Accuracy = float64(stats.CorrectCount) /
+			float64(stats.TotalQuestions) * 100
+		stats.PartialAccuracy = float64(stats.CorrectCount+stats.PartialCount) /
+			float64(stats.TotalQuestions) * 100
+		stats.AvgTime = totalProcessingTime.Seconds() /
+			float64(stats.TotalQuestions)
+		stats.AvgSourceCount = totalSources / float64(stats.TotalQuestions)
+		stats.AvgFactualityScore = totalFactuality / float64(stats.TotalQuestions)
 	}
 
-	// Вычисляем accuracy по категориям
-	for cat, catStats := range stats.ByCategory {
-		catStats.Accuracy = float64(catStats.Correct) / float64(catStats.Total) * 100
-		stats.ByCategory[cat] = catStats
-	}
+	// Finalize category stats
+	finalizeStatsMap(stats.ByCategory)
+	finalizeStatsMap(stats.ByAnswerType)
 
 	return stats
 }
 
-// УЛУЧШЕНО: Более красивый вывод с категориями
-func printSummary(stats Stats, mode string) {
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Printf("      SimpleQA BENCHMARK RESULTS (%s Mode)\n", strings.ToUpper(mode))
-	fmt.Println(strings.Repeat("=", 60))
-
-	fmt.Printf("\n📊 Overall Statistics:\n")
-	fmt.Printf("  Total Questions: %d\n", stats.TotalQuestions)
-	fmt.Printf("  ✅ Correct: %d\n", stats.CorrectCount)
-	fmt.Printf("  ❌ Incorrect: %d\n", stats.FailCount)
-	fmt.Printf("  🎯 Accuracy: %.2f%%\n", stats.Accuracy)
-
-	fmt.Printf("\n📚 By Category:\n")
-	for cat, catStats := range stats.ByCategory {
-		icon := "✅"
-		if catStats.Accuracy < 50 {
-			icon = "❌"
-		} else if catStats.Accuracy < 80 {
-			icon = "⚠️"
-		}
-		fmt.Printf("  %s %s: %.1f%% (%d/%d)\n",
-			icon, cat, catStats.Accuracy, catStats.Correct, catStats.Total)
+func updateCategoryStats(statsMap map[string]CategoryStats, key string, r BenchmarkResult) {
+	cat := statsMap[key]
+	cat.Total++
+	if r.Correct {
+		cat.Correct++
 	}
+	if r.PartiallyCorrect {
+		cat.PartiallyCorrect++
+	}
+	cat.AvgTime += r.ProcessingTime.Seconds()
+	cat.AvgSources += float64(r.SourceCount)
+	statsMap[key] = cat
+}
+
+func finalizeStatsMap(statsMap map[string]CategoryStats) {
+	for key, catStats := range statsMap {
+		if catStats.Total > 0 {
+			catStats.Accuracy = float64(catStats.Correct) /
+				float64(catStats.Total) * 100
+			catStats.PartialAccuracy = float64(catStats.Correct+catStats.PartiallyCorrect) /
+				float64(catStats.Total) * 100
+			catStats.AvgTime /= float64(catStats.Total)
+			catStats.AvgSources /= float64(catStats.Total)
+		}
+		statsMap[key] = catStats
+	}
+}
+
+// ============================================================================
+// Output
+// ============================================================================
+
+func printDetailedSummary(stats Stats, mode string) {
+	fmt.Println("\n" + strings.Repeat("=", 70))
+	fmt.Printf("      SIMPLEQA BENCHMARK RESULTS\n")
+	fmt.Printf("      Mode: %s\n", strings.ToUpper(mode))
+	fmt.Println(strings.Repeat("=", 70))
+
+	fmt.Printf("\n📊 Overall Performance:\n")
+	fmt.Printf("  Total Questions: %d\n", stats.TotalQuestions)
+	fmt.Printf("  ✅ Fully Correct: %d (%.1f%%)\n",
+		stats.CorrectCount, stats.Accuracy)
+	fmt.Printf("  🟡 Partially Correct: %d\n", stats.PartialCount)
+	fmt.Printf("  ❌ Incorrect: %d\n", stats.FailCount)
+	fmt.Printf("  🎯 Strict Accuracy: %.2f%%\n", stats.Accuracy)
+	fmt.Printf("  🎯 Lenient Accuracy: %.2f%%\n", stats.PartialAccuracy)
+
+	fmt.Printf("\n📚 Quality Metrics:\n")
+	fmt.Printf("  📖 Avg Sources: %.1f per question\n", stats.AvgSourceCount)
+	fmt.Printf("  ✓ Avg Factuality Score: %.2f\n", stats.AvgFactualityScore)
 
 	fmt.Printf("\n⏱️  Performance:\n")
 	fmt.Printf("  Average Time: %.2fs per question\n", stats.AvgTime)
 	fmt.Printf("  Total Time: %.2fs\n", stats.TotalTime.Seconds())
 
-	fmt.Println("\n" + strings.Repeat("=", 60))
+	if len(stats.ByCategory) > 0 {
+		fmt.Printf("\n📂 By Category:\n")
+		for cat, catStats := range stats.ByCategory {
+			icon := getAccuracyIcon(catStats.Accuracy)
+			fmt.Printf("  %s %-25s: %.1f%% (%d/%d) | ⏱️  %.2fs | 📚 %.1f\n",
+				icon, cat, catStats.Accuracy, catStats.Correct, catStats.Total,
+				catStats.AvgTime, catStats.AvgSources)
+		}
+	}
+
+	if len(stats.ByAnswerType) > 0 {
+		fmt.Printf("\n🔤 By Answer Type:\n")
+		for ansType, typeStats := range stats.ByAnswerType {
+			icon := getAccuracyIcon(typeStats.Accuracy)
+			fmt.Printf("  %s %-25s: %.1f%% (%d/%d)\n",
+				icon, ansType, typeStats.Accuracy, typeStats.Correct, typeStats.Total)
+		}
+	}
+
+	fmt.Println("\n" + strings.Repeat("=", 70))
 }
 
-func saveResults(results []BenchmarkResult, filename string) error {
-	data, err := json.MarshalIndent(results, "", "  ")
+func getAccuracyIcon(accuracy float64) string {
+	if accuracy >= 80 {
+		return "✅"
+	} else if accuracy >= 50 {
+		return "🟡"
+	}
+	return "❌"
+}
+
+func formatResult(r BenchmarkResult) string {
+	if r.Correct {
+		return "CORRECT"
+	} else if r.PartiallyCorrect {
+		return "PARTIAL"
+	}
+	return "INCORRECT"
+}
+
+func truncate(s string, length int) string {
+	if len(s) <= length {
+		return s
+	}
+	return s[:length] + "..."
+}
+
+func saveResults(results []BenchmarkResult, stats Stats, filename string) error {
+	output := struct {
+		Timestamp string            `json:"timestamp"`
+		Stats     Stats             `json:"stats"`
+		Results   []BenchmarkResult `json:"results"`
+	}{
+		Timestamp: time.Now().Format(time.RFC3339),
+		Stats:     stats,
+		Results:   results,
+	}
+
+	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filename, data, 0o644)
+	return os.WriteFile(filename, data, 0644)
 }

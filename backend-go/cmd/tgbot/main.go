@@ -298,10 +298,23 @@ func handleQuery(bot *tgbotapi.BotAPI, chatID int64, userID int64, query string,
 		userSessions[userID] = session
 	}
 
-	log.Printf("📤 Calling API: %s with mode: %s", apiURL, session.Mode)
+	// Create backend session if we don't have one
+	if session.SessionID == "" {
+		sessionID, err := createChatSession(apiURL, session.Mode)
+		if err != nil {
+			log.Printf("❌ Failed to create session: %v", err)
+			errorMsg := tgbotapi.NewMessage(chatID, "❌ Ошибка создания сессии")
+			bot.Send(errorMsg)
+			return
+		}
+		session.SessionID = sessionID
+		log.Printf("✅ Created new chat session: %s", sessionID)
+	}
 
-	// Call API
-	response, err := callSearchAPI(apiURL, query, session.Mode, session.SessionID)
+	log.Printf("📤 Calling API with session: %s, mode: %s", session.SessionID, session.Mode)
+
+	// Call chat session endpoint (maintains context)
+	response, err := sendChatMessage(apiURL, session.SessionID, query, session.Mode)
 	if err != nil {
 		log.Printf("❌ API Error: %v", err)
 		errorMsg := tgbotapi.NewMessage(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
@@ -309,12 +322,7 @@ func handleQuery(bot *tgbotapi.BotAPI, chatID int64, userID int64, query string,
 		return
 	}
 
-	log.Printf("✅ Got response from API: %d sources", len(response.Sources))
-
-	// Update session ID for context
-	if response.SessionID != "" {
-		session.SessionID = response.SessionID
-	}
+	log.Printf("✅ Got response: %d sources", len(response.Sources))
 
 	// Format and send response
 	responseText := formatResponse(response)
@@ -336,23 +344,51 @@ func handleQuery(bot *tgbotapi.BotAPI, chatID int64, userID int64, query string,
 	}
 }
 
-func callSearchAPI(apiURL, query, mode, sessionID string) (*SearchResponse, error) {
-	reqBody := SearchRequest{
-		Query:     query,
-		Mode:      mode,
-		SessionID: sessionID,
-	}
-
+// Create a new chat session
+func createChatSession(apiURL, mode string) (string, error) {
+	reqBody := map[string]string{"mode": mode}
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return "", err
 	}
 
-	log.Printf("🌐 POST %s/api/search with query: %s", apiURL, query)
-
-	resp, err := http.Post(apiURL+"/api/search", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(apiURL+"/api/chat/session", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to call API: %w", err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to create session: status %d", resp.StatusCode)
+	}
+
+	var sessionResp struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sessionResp); err != nil {
+		return "", err
+	}
+
+	return sessionResp.ID, nil
+}
+
+// Send message to existing chat session
+func sendChatMessage(apiURL, sessionID, query, mode string) (*SearchResponse, error) {
+	reqBody := map[string]string{
+		"query": query,
+		"mode":  mode,
+	}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/api/chat/session/%s/message", apiURL, sessionID)
+	log.Printf("🌐 POST %s", url)
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -364,7 +400,7 @@ func callSearchAPI(apiURL, query, mode, sessionID string) (*SearchResponse, erro
 
 	var searchResp SearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, err
 	}
 
 	return &searchResp, nil
@@ -455,11 +491,11 @@ func handleModeButton(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
 }
 
 func handleNewSessionButton(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
+	// Clear the session ID so a new one will be created on next message
 	if session, ok := userSessions[userID]; ok {
 		session.SessionID = ""
 	}
 
-	// Send confirmation with keyboard
 	keyboard := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("🔧 Выбрать режим"),

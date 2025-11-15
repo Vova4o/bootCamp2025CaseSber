@@ -1,150 +1,169 @@
 # Research Pro Mode - Sber Bootcamp 2025
 
-Продвинутый поисковый ассистент с двумя режимами работы: Simple Mode для быстрого поиска и Pro Mode для глубокого исследования с проверкой фактов.
+Продвинутый поисковый ассистент с тремя режимами работы и Telegram ботом. Система обеспечивает быстрый поиск (Simple), глубокий анализ с контекстом (Pro) и автоматический выбор режима (Auto).
 
 ## 🎯 Описание проекта
 
-Research Pro Mode — это мультиагентная система, которая не просто ищет ответы, а понимает контекст, сравнивает источники и проверяет факты. Система использует несколько специализированных агентов для обработки запросов пользователя.
+Research Pro Mode — это мультиагентная система на Go с веб-интерфейсом и Telegram ботом. Система использует DuckDuckGo для поиска, LLM (OpenAI/Qwen) для анализа и поддерживает контекст беседы в Pro режиме.
 
 **Технологический стек:**
 
-- **Backend**: Python 3.10+ с LangChain/LangGraph
-- **LLM**: Qwen (локальная модель)
+- **Backend**: Go 1.23+ с Gin web framework
 - **Frontend**: Next.js 14+ с TypeScript
-- **Архитектура**: Monorepo
+- **Telegram Bot**: go-telegram-bot-api/v5
+- **Database**: PostgreSQL + Redis
+- **Search**: DuckDuckGo (HTML scraping + Instant Answer API)
+- **LLM**: OpenAI GPT-4 / Qwen API
+- **Архитектура**: Monorepo с Docker Compose
 
 ### Режимы работы
 
-#### Simple Mode
+#### 🤖 Auto Mode
 
-- Быстрый поиск с использованием SERP API
-- Минимальные накладные расходы
-- Идеален для простых запросов
-- Быстрое время отклика
+- Автоматический выбор между Simple и Pro
+- LLM анализирует сложность запроса
+- Оптимизирует скорость и качество
 
-#### Pro Mode
+#### ⚡ Simple Mode
 
-- Глубокий веб-скрапинг
-- Семантическая переоценка результатов
-- Многошаговое рассуждение (multi-hop reasoning)
-- Проверка фактов из нескольких источников
-- Детальный анализ с цитированием источников
+- Быстрый поиск через DuckDuckGo
+- Синтез результатов с помощью LLM
+- Без сохранения контекста
+- Идеален для простых вопросов (Кто? Что? Когда?)
+- ~2-3 секунды на запрос
+
+#### 🚀 Pro Mode
+
+- Глубокий анализ с контекстом беседы
+- Улучшение запроса на основе истории
+- Многошаговое рассуждение
+- Оценка достоверности источников
+- Поддержка follow-up вопросов
+- ~5-10 секунд на запрос
 
 ## 🏗️ Архитектура системы
 
 ```
-┌─────────────────┐
-│  Next.js UI     │ ◄── Frontend (Port 3000)
-└────────┬────────┘
-         │ HTTP/WebSocket
-         ▼
-┌─────────────────┐
-│  FastAPI Server │ ◄── Backend API (Port 8000)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  1. Mode Selector Agent │ ◄── Выбор Simple/Pro режима
-└────────┬────────────────┘
+┌──────────────────┐         ┌──────────────────┐
+│   Next.js UI     │         │  Telegram Bot    │
+│   (Port 3000)    │         │   (@bot)         │
+└────────┬─────────┘         └────────┬─────────┘
+         │                            │
+         │         HTTP API           │
+         └─────────────┬──────────────┘
+                       ▼
+              ┌─────────────────┐
+              │   Gin Server    │ ◄── Go Backend (Port 8000)
+              │   (Port 8000)   │
+              └────────┬────────┘
+                       │
+         ┌─────────────┴─────────────┐
+         ▼                           ▼
+┌─────────────────┐         ┌─────────────────┐
+│  RouterAgent    │         │  ModeSelector   │
+│  (Auto/Simple/  │         │  (LLM-based)    │
+│   Pro routing)  │         │                 │
+└────────┬────────┘         └─────────────────┘
          │
     ┌────┴────┐
-    │         │
     ▼         ▼
-┌───────┐  ┌──────────────────────┐
-│Simple │  │    Pro Mode Flow     │
-│ Mode  │  └──────────┬───────────┘
-└───┬───┘             │
-    │            ┌────┴────┐
-    │            ▼         │
-    │  ┌──────────────────────────┐
-    │  │ 2. Web Scraping Agent    │ ◄── Сбор данных
-    │  └──────────┬───────────────┘
-    │             │
-    │             ▼
-    │  ┌──────────────────────────┐
-    │  │ 3. Fact Analysis Agent   │ ◄── Анализ фактов
-    │  └──────────┬───────────────┘
-    │             │
-    │             ▼
-    │  ┌──────────────────────────┐
-    │  │ 4. Hypothesis Verification│ ◄── Проверка гипотез
-    │  └──────────┬───────────────┘
-    │             │
-    └────┬────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│ 5. Response Aggregator  │ ◄── Сбор итогового ответа
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  User Reply     │
-└─────────────────┘
+┌──────────────┐  ┌──────────────────┐
+│ SimpleAgent  │  │   ProAgent       │
+│              │  │                  │
+│ • DuckDuckGo │  │ • Context from   │
+│ • LLM Synth  │  │   chat history   │
+│ • No context │  │ • Query enhance  │
+└──────┬───────┘  │ • DuckDuckGo     │
+       │          │ • Credibility    │
+       │          │ • LLM reasoning  │
+       │          └────────┬─────────┘
+       └──────────┬────────┘
+                  ▼
+         ┌─────────────────┐
+         │  SearchClient   │ ◄── DuckDuckGo scraping
+         │  (Rate limited  │     + Instant Answer API
+         │   1 req/sec)    │
+         └────────┬────────┘
+                  │
+         ┌────────┴────────┐
+         ▼                 ▼
+┌─────────────────┐  ┌─────────────────┐
+│   PostgreSQL    │  │     Redis       │
+│  (Sessions &    │  │   (Caching)     │
+│   Messages)     │  │                 │
+└─────────────────┘  └─────────────────┘
 ```
 
 ## 📁 Структура проекта (Monorepo)
 
 ```
 bootCamp2025CaseSber/
-├── backend/                        # Python Backend
-│   ├── src/
+├── backend-go/                     # Go Backend
+│   ├── cmd/
+│   │   ├── server/
+│   │   │   └── main.go            # Gin HTTP server
+│   │   ├── tgbot/
+│   │   │   ├── main.go            # Telegram bot
+│   │   │   └── README.md
+│   │   └── benchmark/
+│   │       ├── simpleqa/main.go   # SimpleQA benchmark
+│   │       ├── frames/main.go     # FRAMES benchmark
+│   │       └── compare/main.go    # Comparison tool
+│   ├── internal/
 │   │   ├── agents/
-│   │   │   ├── __init__.py
-│   │   │   ├── mode_selector.py
-│   │   │   ├── web_scraper.py
-│   │   │   ├── fact_analyzer.py
-│   │   │   ├── hypothesis_verifier.py
-│   │   │   ├── response_aggregator.py
-│   │   │   └── social_analyzer.py
-│   │   ├── core/
-│   │   │   ├── __init__.py
-│   │   │   ├── orchestrator.py
-│   │   │   └── config.py
-│   │   ├── tools/
-│   │   │   ├── __init__.py
-│   │   │   ├── search_api.py
-│   │   │   ├── scraper.py
-│   │   │   ├── llm_client.py
-│   │   │   └── social_scrapers.py
+│   │   │   ├── router.go          # Agent routing
+│   │   │   ├── simple_agent.go    # Fast search
+│   │   │   ├── pro_agent.go       # Deep analysis
+│   │   │   └── mode_selector.go   # Auto mode
 │   │   ├── api/
-│   │   │   ├── __init__.py
-│   │   │   ├── main.py            # FastAPI app
-│   │   │   └── routes/
-│   │   │       ├── search.py
-│   │   │       └── health.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── logger.py
-│   │       └── helpers.py
-│   ├── tests/
-│   ├── requirements.txt
-│   └── .env
+│   │   │   ├── routes.go
+│   │   │   └── handlers/
+│   │   │       ├── chat.go        # Chat sessions
+│   │   │       ├── search.go      # One-time search
+│   │   │       └── health.go      # Health check
+│   │   ├── tools/
+│   │   │   ├── llm_client.go      # OpenAI/Qwen client
+│   │   │   ├── search_client.go   # DuckDuckGo scraper
+│   │   │   ├── reranker.go        # Result reranking
+│   │   │   └── credibility.go     # Source scoring
+│   │   ├── database/
+│   │   │   └── database.go        # GORM models
+│   │   ├── config/
+│   │   │   └── config.go          # Config loader
+│   │   └── models/
+│   │       └── models.go          # API structs
+│   ├── go.mod
+│   ├── go.sum
+│   ├── Dockerfile                 # Backend image
+│   └── Dockerfile.tgbot           # Telegram bot image
 │
 ├── frontend/                       # Next.js Frontend
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── layout.tsx
-│   │   │   ├── page.tsx
-│   │   │   └── globals.css
-│   │   ├── components/
-│   │   │   ├── SearchBar.tsx
-│   │   │   ├── ResultCard.tsx
-│   │   │   ├── ModeSelector.tsx
-│   │   │   └── LoadingSpinner.tsx
-│   │   ├── lib/
-│   │   │   └── api.ts             # API client
-│   │   └── types/
-│   │       └── index.ts
-│   ├── public/
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx               # Main UI
+│   │   └── globals.css
+│   ├── components/
+│   │   ├── ChatInterface.tsx      # Chat with context
+│   │   ├── ChatMessage.tsx        # Message bubble
+│   │   ├── ChatList.tsx           # Session list
+│   │   ├── ModeSelector.tsx       # Mode switcher
+│   │   └── CompactModeSelector.tsx
+│   ├── lib/
+│   │   └── api.ts                 # Axios client
+│   ├── types/
+│   │   └── index.ts               # TypeScript types
 │   ├── package.json
 │   ├── tsconfig.json
-│   ├── next.config.js
-│   └── tailwind.config.js
+│   └── Dockerfile
 │
-├── docs/
+├── searxng/                        # SearXNG config
+│   ├── settings.yml
+│   └── limiter.toml
+│
+├── docker-compose.yml              # Full stack
+├── .env                            # Environment vars
+├── .env.example                    # Template
 ├── .gitignore
-├── docker-compose.yml
 └── README.md
 ```
 
@@ -152,53 +171,91 @@ bootCamp2025CaseSber/
 
 ### Требования
 
-- Python 3.10+
-- Node.js 18+
-- Qwen LLM (локально или через API)
-- API ключи для поисковых сервисов
+- Docker & Docker Compose
+- Go 1.23+ (для локальной разработки)
+- Node.js 18+ (для локальной разработки)
+- OpenAI API ключ или Qwen API
 
-### Backend Setup
+### Quick Start с Docker (рекомендуется)
 
 ```bash
-cd backend
+# 1. Клонировать репозиторий
+git clone <repo-url>
+cd bootCamp2025CaseSber
 
-# Создание виртуального окружения
-python -m venv venv
-source venv/bin/activate  # для Mac/Linux
-
-# Установка зависимостей
-pip install -r requirements.txt
-
-# Настройка переменных окружения
+# 2. Настроить переменные окружения
 cp .env.example .env
-# Отредактируйте .env
+# Отредактируйте .env и добавьте:
+# - OPENAI_API_KEY=your-key
+# - TELEGRAM_BOT_TOKEN=your-bot-token (опционально)
 
-# Запуск сервера
-uvicorn src.api.main:app --reload --port 8000
+# 3. Запустить весь стек
+docker-compose up -d
+
+# Проверить статус
+docker-compose ps
+
+# Логи
+docker logs research_backend -f
+docker logs research_frontend -f
+docker logs research_tgbot -f
 ```
 
-### Frontend Setup
+**Доступ:**
+
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- SearXNG: http://localhost:8080
+- PostgreSQL: localhost:5432
+- Redis: localhost:6379
+
+### Локальная разработка
+
+#### Backend (Go)
+
+```bash
+cd backend-go
+
+# Установить зависимости
+go mod download
+
+# Запустить сервер
+go run ./cmd/server/main.go
+
+# Или собрать
+go build -o bin/server ./cmd/server/main.go
+./bin/server
+```
+
+#### Frontend (Next.js)
 
 ```bash
 cd frontend
 
-# Установка зависимостей
+# Установить зависимости
 npm install
 
-# Запуск dev сервера
+# Dev сервер
 npm run dev
+
+# Production build
+npm run build
+npm start
 ```
 
-Приложение будет доступно по адресу: http://localhost:3000
-
-### Docker Setup (опционально)
+#### Telegram Bot
 
 ```bash
-# Запуск всего стека
-docker-compose up -d
+cd backend-go
 
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000
+# Получить токен от @BotFather в Telegram
+# Добавить в .env: TELEGRAM_BOT_TOKEN=your-token
+
+# Запустить бота
+go run ./cmd/tgbot/main.go
+
+# Или через Docker
+docker-compose up -d tgbot
 ```
 
 ## 🎨 Frontend Features
@@ -212,91 +269,327 @@ docker-compose up -d
 
 ## 🔧 API Endpoints (скоро)
 
-### POST /api/search
+## 📋 API Endpoints
 
-Выполняет поиск через агентов
+### Health Check
 
-```typescript
+```bash
+GET /health
+
+# Response: {"status": "ok"}
+```
+
+### Stateless Search (без контекста)
+
+```bash
+POST /api/search
+Content-Type: application/json
+
 {
-  "query": "Ваш запрос",
-  "mode": "auto" | "simple" | "pro"
+  "query": "quantum computing applications",
+  "mode": "simple"  # "simple", "pro", "auto"
 }
 ```
 
-### GET /api/health
+**Response:**
 
-Проверка состояния сервера
+```json
+{
+  "query": "quantum computing applications",
+  "answer": "Квантовые вычисления применяются в области криптографии, оптимизации...",
+  "sources": [
+    {
+      "title": "Quantum Computing in Drug Discovery",
+      "url": "https://example.com/article",
+      "snippet": "Recent advances show...",
+      "credibility_score": 0.95
+    }
+  ],
+  "mode": "simple",
+  "processing_time": "2.3s"
+}
+```
+
+### Stateful Chat (с контекстом)
+
+**1. Создать сессию:**
+
+```bash
+POST /api/chat/session
+Content-Type: application/json
+
+{
+  "mode": "pro"  # "simple", "pro", "auto"
+}
+
+# Response: {"session_id": "550e8400-e29b-41d4-a716-446655440000"}
+```
+
+**2. Отправить сообщение:**
+
+```bash
+POST /api/chat/session/{session_id}/message
+Content-Type: application/json
+
+{
+  "query": "Who is Donald Trump?",
+  "mode": "pro"
+}
+
+# Второе сообщение с контекстом:
+POST /api/chat/session/{session_id}/message
+{
+  "query": "How old is he?",
+  "mode": "pro"
+}
+# Ответ использует контекст предыдущего сообщения
+```
+
+**3. Получить историю сессии:**
+
+```bash
+GET /api/chat/session/{session_id}/history
+
+# Response:
+{
+  "session_id": "...",
+  "messages": [
+    {"role": "user", "content": "Who is Donald Trump?"},
+    {"role": "assistant", "content": "Donald Trump is...", "sources": [...]},
+    {"role": "user", "content": "How old is he?"},
+    {"role": "assistant", "content": "He is 78 years old...", "sources": [...]}
+  ]
+}
+```
+
+**4. Удалить сессию:**
+
+```bash
+DELETE /api/chat/session/{session_id}
+```
 
 ## 📊 Бенчмарки
 
-### SimpleQA Bench
+### SimpleQA Benchmark
+
+Тестирование на датасете SimpleQA (4,326 вопросов) - оценка точности фактических ответов:
 
 ```bash
-cd backend
-python -m tests.benchmarks.simpleqa_bench --mode simple
+cd backend-go
+
+# Запустить SimpleQA бенчмарк
+make benchmark-simpleqa
+# или
+./bin/simpleqa
+
+# Результаты в: cmd/benchmark/simpleqa/simpleqa_benchmark_*.json
 ```
 
-### FRAMES Bench
+**Метрики:**
+
+- Accuracy: % правильных ответов
+- Response Time: среднее время обработки
+- Source Quality: средний балл достоверности источников
+- Citation Rate: % ответов с источниками
+
+### FRAMES Benchmark
+
+Тестирование на FRAMES (824 вопроса) - оценка рассуждений с реальными фактами:
 
 ```bash
-cd backend
-python -m tests.benchmarks.frames_bench --mode pro
+cd backend-go
+
+# Запустить FRAMES бенчмарк
+make benchmark-frames
+# или
+go run ./cmd/benchmark/frames/main.go
+
+# Результаты в: cmd/benchmark/frames/frames_benchmark_*.json
 ```
+
+**Метрики:**
+
+- Reasoning Accuracy: корректность логических цепочек
+- Fact Retrieval: точность извлечения фактов
+- Multi-hop Performance: качество многоступенчатых выводов
+
+### Сравнение режимов
+
+```bash
+cd backend-go
+
+# Сравнить Simple vs Pro режимы
+./bin/compare simpleqa_benchmark_1.json simpleqa_benchmark_2.json
+# или
+go run ./cmd/benchmark/compare/main.go file1.json file2.json
+```
+
+**Типичные результаты:**
+
+- Simple Mode: ~2-3s, 70-75% accuracy
+- Pro Mode: ~5-10s, 80-85% accuracy (с контекстом)
+- Auto Mode: динамический выбор на основе сложности запроса
 
 ## 🧪 Тестирование
 
-### Backend Tests
+### Backend Tests (Go)
 
 ```bash
-cd backend
-pytest tests/
+cd backend-go
+
+# Запустить все тесты
+go test ./...
+
+# С покрытием
+go test -cover ./...
+
+# Verbose режим
+go test -v ./internal/agents/
+
+# Конкретный пакет
+go test ./internal/tools/
 ```
 
 ### Frontend Tests
 
 ```bash
 cd frontend
+
+# Unit тесты
 npm test
+
+# E2E тесты
+npm run test:e2e
+
+# Coverage
+npm run test:coverage
+```
+
+### Integration Tests
+
+```bash
+# Запустить Docker stack
+docker-compose up -d
+
+# Тестовый запрос к API
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is AI?", "mode": "simple"}'
+
+# Health check
+curl http://localhost:8000/health
 ```
 
 ## 📈 Roadmap
 
-- [x] Базовая архитектура мультиагентной системы
-- [x] Monorepo структура
-- [x] Next.js frontend setup
-- [ ] Интеграция Qwen LLM
-- [ ] Реализация Simple Mode
-- [ ] FastAPI backend с WebSocket
-- [ ] Реализация Pro Mode
-- [ ] Интеграция с поисковыми API
-- [ ] Веб-скрапинг агент
-- [ ] Система проверки фактов
-- [ ] Бенчмарки SimpleQA и FRAMES
-- [ ] Расширенные режимы (Social, Academic, Finance)
-- [ ] Docker контейнеризация
-- [ ] CI/CD pipeline
+### ✅ Completed (v1.0)
+
+- [x] Базовая архитектура мультиагентной системы (Go)
+- [x] Monorepo структура с Docker Compose
+- [x] Next.js frontend с TypeScript
+- [x] Gin backend с REST API
+- [x] RouterAgent с ModeSelector (LLM-based)
+- [x] Simple Mode (быстрый поиск 2-3s)
+- [x] Pro Mode (контекстный поиск 5-10s)
+- [x] Auto Mode (автоопределение сложности)
+- [x] Интеграция DuckDuckGo (HTML + Instant API)
+- [x] Система credibility scoring источников
+- [x] PostgreSQL + Redis для персистентности
+- [x] Telegram Bot интеграция (@aiassistanthelp_bot)
+- [x] Бенчмарки SimpleQA и FRAMES
+- [x] Docker контейнеризация всего стека
+- [x] SearXNG метапоисковая система
+
+### 🔄 In Progress
+
+- [ ] Context preservation в Telegram боте (chat sessions)
+- [ ] Улучшенный reranker с кроссэнкодером
+- [ ] Расширенные специализированные агенты:
+  - [ ] Social Media Agent (Reddit, Twitter scraping)
+  - [ ] Academic Agent (arXiv, Scholar, PubMed)
+  - [ ] Finance Agent (Yahoo Finance, Bloomberg)
+- [ ] WebSocket для real-time обновлений
+- [ ] User authentication + персонализация
+
+### 🚀 Future Plans
+
+- [ ] Multi-turn reasoning с длинным контекстом
+- [ ] RAG с векторной БД (Qdrant/Weaviate)
+- [ ] Fact-checking pipeline с source verification
+- [ ] A/B тестирование режимов на production
+- [ ] Kubernetes deployment
+- [ ] CI/CD pipeline (GitHub Actions)
+- [ ] Мониторинг и аналитика (Prometheus + Grafana)
 
 ## 🤝 Разработка
 
-### Backend
+### Backend (Go)
 
 ```bash
-cd backend
-source venv/bin/activate
-uvicorn src.api.main:app --reload
+cd backend-go
+
+# Установить зависимости
+go mod download
+
+# Запустить с hot reload (используйте air или make watch)
+go run ./cmd/server/main.go
+
+# Или соберите бинарник
+make build
+./bin/server
 ```
 
-### Frontend
+### Frontend (Next.js)
 
 ```bash
 cd frontend
+
+# Dev сервер с hot reload
 npm run dev
+
+# Открыть http://localhost:3000
 ```
+
+### Telegram Bot
+
+```bash
+cd backend-go
+
+# Добавить токен в .env
+echo "TELEGRAM_BOT_TOKEN=your-token" >> ../../.env
+
+# Запустить бота
+go run ./cmd/tgbot/main.go
+```
+
+### Структура внесения изменений
+
+1. **Добавление нового агента:**
+
+   - Создать `backend-go/internal/agents/your_agent.go`
+   - Имплементировать интерфейс `Agent` с методом `Process()`
+   - Добавить в `router.go` логику маршрутизации
+   - Обновить `ModeSelector` если нужен новый режим
+
+2. **Добавление нового scraper:**
+
+   - Создать `backend-go/internal/scrapers/your_scraper.go`
+   - Имплементировать HTTP-запросы и парсинг HTML
+   - Добавить в `SearchClient` в `internal/tools/search_client.go`
+
+3. **Обновление API:**
+   - Эндпоинты в `backend-go/internal/api/routes.go`
+   - Handlers в `backend-go/internal/api/handlers/`
+   - Модели в `backend-go/internal/models/models.go`
 
 ## 📄 Лицензия
 
 MIT License
 
 ## 👥 Команда
+
+Team Lead - Погодин Иван
+Разработчик - Гавриленко Владимир
+Бизнес аналитик - Бочарова Станислава
 
 Sber Bootcamp 2025 - Case Study

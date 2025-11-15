@@ -11,8 +11,10 @@ require (
 )
 
 require (
+	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/gin-contrib/cors v1.7.6
 	github.com/go-resty/resty/v2 v2.16.5
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/google/uuid v1.5.0
 	github.com/joho/godotenv v1.5.1
 	gorm.io/driver/postgres v1.6.0
@@ -20,7 +22,6 @@ require (
 )
 
 require (
-	github.com/PuerkitoBio/goquery v1.10.3 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/bytedance/sonic v1.13.3 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect

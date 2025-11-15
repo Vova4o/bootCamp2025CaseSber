@@ -99,6 +99,21 @@ services:
       - research_network
     restart: unless-stopped
 
+  # Telegram Bot
+  tgbot:
+    build:
+      context: ./backend-go
+      dockerfile: Dockerfile.tgbot
+    container_name: research_tgbot
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - API_URL=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - research_network
+    restart: unless-stopped
+
 networks:
   research_network:
     driver: bridge
